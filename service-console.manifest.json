@@ -120,6 +120,12 @@
       "environment": "local-mac"
     },
     {
+      "id": "paid-handoff-config",
+      "label": "Paid Handoff Config API",
+      "url": "http://127.0.0.1:4888/api/paid-handoff-config",
+      "environment": "local-mac"
+    },
+    {
       "id": "claim-confirmation",
       "label": "Claim Confirmation Evidence API",
       "url": "http://127.0.0.1:4888/api/claim-confirmation",

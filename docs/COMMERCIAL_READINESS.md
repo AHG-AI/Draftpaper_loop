@@ -143,6 +143,15 @@ For paid local handoff, prefer the generator over hand-written private JSON. It
 creates a commercial license grant, hashed-token users policy, billing rates,
 `handoff-env.sh`, and a private manifest under an excluded runtime directory.
 
+The Service Console exposes the same generator as `POST
+/api/paid-handoff-config` and the `Paid Config` button. Fill the customer,
+expiry, seat, billing-rate, and optional signing-key fields; when `Activate` is
+checked, the route writes the standard active handoff env file and updates the
+current console process to use the generated license, users, billing, and
+license trust-pin values. The response returns file paths, hashes, and status
+only. It does not return the plaintext operator token; if token-file output is
+enabled, the token is written as an owner-only private runtime file for handoff.
+
 Example:
 
 ```bash

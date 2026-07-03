@@ -138,6 +138,12 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("saveTokenBtn", html)
         self.assertIn("releaseZipPath", html)
         self.assertIn("hostedBaseUrl", html)
+        self.assertIn("paidConfigBtn", html)
+        self.assertIn("handoffCustomerId", html)
+        self.assertIn("handoffCustomerName", html)
+        self.assertIn("handoffOutputDir", html)
+        self.assertIn("handoffExpiresAt", html)
+        self.assertIn("handoffActivate", html)
         self.assertIn("hostedDraftBtn", html)
         self.assertIn("hostedFinalizeBtn", html)
         self.assertIn("hostedDossierBtn", html)
@@ -155,6 +161,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/project-stage-graph", html)
         self.assertIn("/api/commercial-readiness", html)
         self.assertIn("/api/handoff-readiness", html)
+        self.assertIn("/api/paid-handoff-config", html)
         self.assertIn("/api/hosted-readiness-draft", html)
         self.assertIn("/api/hosted-readiness-finalize", html)
         self.assertIn("/api/hosted-readiness-dossier", html)
@@ -229,6 +236,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("commercial_launch_package", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_operations_report", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
+        self.assertIn("paid_handoff_config_generation", {item["id"] for item in readiness["checks"]})
         self.assertIn("sample_workflow_acceptance", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_evidence_collection", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_evidence_collection_verification", {item["id"] for item in readiness["checks"]})
@@ -249,6 +257,89 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertEqual(tracks["paid_local_handoff"]["status"], "blocked")
         self.assertEqual(tracks["hosted_saas"]["status"], "not_ready")
         self.assertTrue(readiness["remaining_gaps"])
+
+    def test_generate_paid_handoff_config_from_console_activates_current_process(self) -> None:
+        portal = load_portal_module()
+
+        def fake_generate_handoff_config(**kwargs):
+            output_dir = Path(kwargs["output_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.chmod(0o700)
+            license_file = output_dir / "commercial-license-grant.json"
+            users_file = output_dir / "console-users.json"
+            billing_file = output_dir / "billing-rates.json"
+            env_file = output_dir / "handoff-env.sh"
+            manifest_file = output_dir / "handoff-manifest.json"
+            token_file = output_dir / "operator-token.txt"
+            for path in [license_file, users_file, billing_file, env_file, manifest_file, token_file]:
+                path.write_text("{}\n", encoding="utf-8")
+                path.chmod(0o600)
+            return {
+                "schema_version": "draftpaper.handoff-config/v1",
+                "status": "generated",
+                "output_dir": str(output_dir),
+                "customer_id": kwargs["customer_id"],
+                "customer_name": kwargs["customer_name"],
+                "license_id": "DPL-COMM-CUST",
+                "workspace": "cust-a",
+                "operator_id": kwargs["operator_id"],
+                "operator_role": kwargs["operator_role"],
+                "token_sha256": "b" * 64,
+                "grant_sha256": "c" * 64,
+                "files": {
+                    "license": str(license_file),
+                    "users": str(users_file),
+                    "billing": str(billing_file),
+                    "env": str(env_file),
+                    "manifest": str(manifest_file),
+                    "token": str(token_file),
+                    "active_env": str(portal.DEFAULT_ACTIVE_HANDOFF_ENV),
+                    "license_public_key_sha256": "d" * 64,
+                },
+                "activated": kwargs["activate"],
+                "license_signed": False,
+            }
+
+        generator = type("FakeHandoffGenerator", (), {"generate_handoff_config": staticmethod(fake_generate_handoff_config)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "DEFAULT_ACTIVE_HANDOFF_ENV", runtime_root / "active-handoff.env"):
+                    with patch.object(portal, "_handoff_config_generator_module", return_value=generator):
+                        with patch.dict(
+                            os.environ,
+                            {
+                                "DRAFTPAPER_LICENSE_FILE": "",
+                                "DRAFTPAPER_CONSOLE_USERS_FILE": "",
+                                "DRAFTPAPER_BILLING_RATES_FILE": "",
+                                "DRAFTPAPER_LICENSE_PUBLIC_KEY_SHA256": "",
+                            },
+                        ):
+                            report = portal.generate_paid_handoff_config_from_console(
+                                customer_id="CUST-A",
+                                customer_name="Customer A",
+                                activate=True,
+                                context=portal._local_admin_context(),
+                            )
+                            active_license = os.environ.get("DRAFTPAPER_LICENSE_FILE")
+                            active_users = os.environ.get("DRAFTPAPER_CONSOLE_USERS_FILE")
+                            active_billing = os.environ.get("DRAFTPAPER_BILLING_RATES_FILE")
+                            active_pin = os.environ.get("DRAFTPAPER_LICENSE_PUBLIC_KEY_SHA256")
+
+            files = report["files"]
+
+            self.assertEqual(report["schema_version"], "draftpaper.paid-handoff-config-preparation/v1")
+            self.assertEqual(report["status"], "generated")
+            self.assertTrue(report["activated_in_process"])
+            self.assertEqual(report["token_sha256"], "b" * 64)
+            self.assertNotIn("operator-token-value", json.dumps(report))
+            self.assertEqual(active_license, files["license"])
+            self.assertEqual(active_users, files["users"])
+            self.assertEqual(active_billing, files["billing"])
+            self.assertEqual(active_pin, "d" * 64)
+            self.assertIn("paid_handoff_configs", str(Path(report["output_dir"])))
+            self.assertEqual(Path(files["token"]).stat().st_mode & 0o077, 0)
 
     def test_handoff_readiness_blocks_paid_handoff_without_license_or_auth(self) -> None:
         portal = load_portal_module()
