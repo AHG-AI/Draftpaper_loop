@@ -579,6 +579,19 @@ curl -sS -o /tmp/draftpaper-support-bundle.zip \
 python scripts/verify_support_bundle.py /tmp/draftpaper-support-bundle.zip
 ```
 
+For launch packaging, prefer writing the same bundle directly to a private local
+runtime path and verifying it in one console call:
+
+```bash
+curl -sS -X POST http://127.0.0.1:4888/api/support-bundle-file \
+  -H 'Content-Type: application/json' \
+  -d '{"output_path": ""}'
+```
+
+The response includes `zip_path`, `archive_sha256`, and
+`verification_status`. Use `zip_path` as the `support_bundle` input for
+`POST /api/commercial-launch-package`.
+
 Access policy summary:
 
 ```bash
@@ -617,6 +630,12 @@ roots such as the repo, projects, runtime, home, and temporary directory
 prefixes are also replaced with `[redacted]`. Verify downloaded bundles with
 `scripts/verify_support_bundle.py` before attaching them to a customer support
 or handoff record.
+
+The Service Console also exposes `POST /api/support-bundle-file` and the
+`Support File` button. This writes the redacted bundle under
+`runtime/support_bundles/` by default, sets owner-only permissions, reruns
+`scripts/verify_support_bundle.py`, and can auto-fill the Launch Package support
+bundle path in the console.
 
 ## Security Preflight
 

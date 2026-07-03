@@ -216,6 +216,12 @@
       "environment": "local-mac"
     },
     {
+      "id": "support-bundle-file",
+      "label": "Support Bundle File API",
+      "url": "http://127.0.0.1:4888/api/support-bundle-file",
+      "environment": "local-mac"
+    },
+    {
       "id": "backups",
       "label": "Backups API",
       "url": "http://127.0.0.1:4888/api/backups",

@@ -155,7 +155,10 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("launchPublicKeyPath", html)
         self.assertIn("launchHandoffDossierPath", html)
         self.assertIn("launchSupportBundlePath", html)
+        self.assertIn("supportFileBtn", html)
+        self.assertIn("supportOutputPath", html)
         self.assertIn("/api/commercial-launch-package", html)
+        self.assertIn("/api/support-bundle-file", html)
         self.assertIn("paidConfigBtn", html)
         self.assertIn("suiteBtn", html)
         self.assertIn("opsReportBtn", html)
@@ -280,6 +283,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("stage_dependency_graph", {item["id"] for item in readiness["checks"]})
         self.assertIn("support_bundle", {item["id"] for item in readiness["checks"]})
         self.assertIn("support_bundle_verification", {item["id"] for item in readiness["checks"]})
+        self.assertIn("support_bundle_file_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("backup_integrity_audit", {item["id"] for item in readiness["checks"]})
         self.assertIn("release_package_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_readiness_dossier", {item["id"] for item in readiness["checks"]})
@@ -2148,6 +2152,30 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertNotIn("raw-secret-value", combined)
             self.assertNotIn("manuscript output should not be bundled", combined)
             self.assertNotIn("private stack trace should not be bundled", combined)
+
+    def test_support_bundle_file_from_console_writes_private_verified_zip(self) -> None:
+        portal = load_portal_module()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            projects_root = Path(tmp) / "projects"
+            runtime_root = Path(tmp) / "runtime"
+            create_project(root=projects_root, idea="Support file smoke", field="workflow engineering")
+
+            with patch.object(portal, "PROJECTS_ROOT", projects_root.resolve()):
+                with patch.object(portal, "RUNTIME_ROOT", runtime_root):
+                    report = portal.build_support_bundle_file_from_console(context=portal._local_admin_context())
+
+            zip_path = Path(report["zip_path"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.support-bundle-file/v1")
+            self.assertEqual(report["status"], "verified")
+            self.assertEqual(report["verification_status"], "verified")
+            self.assertEqual(report["verification_summary"]["errors"], 0)
+            self.assertTrue(zip_path.exists())
+            self.assertEqual(zip_path.stat().st_mode & 0o077, 0)
+            self.assertEqual(zip_path.parent.stat().st_mode & 0o077, 0)
+            self.assertIn("support_bundles", str(zip_path))
+            self.assertEqual(report["archive_sha256"], report["verification"]["zip_sha256"])
 
     def test_max_concurrent_jobs_blocks_new_jobs(self) -> None:
         portal = load_portal_module()
