@@ -28,7 +28,7 @@ Draftpaper-loop 不只是帮用户写论文，也希望把“论文修改经验�
 
 ## 功能概览
 
-Draftpaper-loop 将单篇论文组织为一个本地项目目录，并通过显式、可重跑的阶段推进。当前主流程是 evidence-first：项目创建、文献检索、目标期刊模板解析、research plan、数据补充与整合、方法规划、图表规划、分析代码生成、方法验证、result validity、core evidence 审阅、Results 写作、Introduction/Data/Methods/Discussion 写作、LaTeX 组装、PDF 审阅、完整性检查、审稿式 revision routing 和最终 quality gate。
+Draftpaper-loop 将单篇论文组织为一个本地项目目录，并通过显式、可重跑的阶段推进：项目创建、文献检索、目标期刊模板解析、research plan、Introduction、Data、Methods、Results、Discussion、LaTeX 组装、PDF 审阅、完整性检查、审稿式 revision routing 和最终 quality gate。
 
 文献流程优先使用免费检索源，包括 Semantic Scholar、arXiv、Crossref 和可选 SerpApi。输出包括 BibTeX、citation evidence、文献综述笔记、HTML 单篇文献摘要，以及面向 Introduction/Data/Methods 的上下文证据。对于缺少 abstract 的数据或方法文献，可以通过项目内的 `paper_fetch_adapter.py` 调用 vendored `paper-fetch-skill` 运行时补全文献证据。
 
@@ -139,6 +139,8 @@ powershell -ExecutionPolicy Bypass -Command "git clone https://github.com/xiejhh
 .\.venv\Scripts\draftpaper run-pipeline --project .\projects\your_project
 .\.venv\Scripts\draftpaper search-literature --project .\projects\your_project --query "topic keywords"
 .\.venv\Scripts\draftpaper record-observation --project .\projects\your_project --stage data --kind agent_analysis --text "Codex 已展示给用户的数据分析摘要..."
+.\.venv\Scripts\draftpaper build-data-context --project .\projects\your_project
+.\.venv\Scripts\draftpaper write-data --project .\projects\your_project
 .\.venv\Scripts\draftpaper list-zotero-collections
 .\.venv\Scripts\draftpaper search-literature --project .\projects\your_project --zotero-collection "Your Zotero Collection" --zotero-context all
 .\.venv\Scripts\draftpaper prepare-method-blueprint --project .\projects\your_project
@@ -147,18 +149,8 @@ powershell -ExecutionPolicy Bypass -Command "git clone https://github.com/xiejhh
 .\.venv\Scripts\draftpaper diagnose-figure-execution --project .\projects\your_project
 .\.venv\Scripts\draftpaper repair-figure-data --project .\projects\your_project
 .\.venv\Scripts\draftpaper repair-figure-method --project .\projects\your_project
-.\.venv\Scripts\draftpaper assess-result-validity --project .\projects\your_project
-.\.venv\Scripts\draftpaper assess-core-evidence --project .\projects\your_project
-.\.venv\Scripts\draftpaper checkpoint --project .\projects\your_project --stage core_evidence --note "User approved core figures and evidence"
-.\.venv\Scripts\draftpaper inventory-results --project .\projects\your_project
-.\.venv\Scripts\draftpaper write-results --project .\projects\your_project
-.\.venv\Scripts\draftpaper write-introduction --project .\projects\your_project
-.\.venv\Scripts\draftpaper build-data-context --project .\projects\your_project
-.\.venv\Scripts\draftpaper write-data --project .\projects\your_project
 .\.venv\Scripts\draftpaper record-observation --project .\projects\your_project --stage methods --kind method_rationale --text "Codex 已展示给用户的方法设计摘要..."
 .\.venv\Scripts\draftpaper build-method-context --project .\projects\your_project
-.\.venv\Scripts\draftpaper write-methods --project .\projects\your_project
-.\.venv\Scripts\draftpaper write-discussion --project .\projects\your_project
 .\.venv\Scripts\draftpaper validate-project --project .\projects\your_project
 ```
 
@@ -189,7 +181,7 @@ python -m draftpaper_cli.cli search-literature --project <repo>\projects\your_pr
 
 ## 当前实现状态
 
-当前版本已经包含核心 loop primitives：orchestrator、checkpoint/resume、artifact drift 检测、文献检索、期刊模板解析、research plan、数据获取规划、data inventory 和 feasibility、method plan、figure plan、figure-plan-driven analysis code generation、method verification、result validity、core evidence、result inventory、Results 写作与中文结果摘要、Introduction、Data writing context、Data 写作、Methods writing context、Methods 写作、Discussion、LaTeX assembly、PDF compilation、integrity gate、citation audit and repair、review/revision routing、publication readiness assessment、statistical rescue planning 和 final quality check。也就是说，论文正文写作默认后置到核心图表和结果证据通过之后执行。
+当前版本已经包含核心 loop primitives：orchestrator、checkpoint/resume、artifact drift 检测、文献检索、期刊模板解析、research plan、Introduction、observation 记录、Data writing context、Data 写作、data inventory 和 feasibility、method plan、figure plan、figure-plan-driven analysis code generation、method verification、Methods writing context、Methods 写作、result validity、result inventory、Results、Discussion、LaTeX assembly、PDF compilation、integrity gate、review/revision routing、publication readiness assessment、statistical rescue planning 和 final quality check。
 
 每个项目都有 `project_passport.yaml`，以及 append-only 的 `artifact_ledger.jsonl`、`checkpoint_ledger.jsonl` 和 `integrity_ledger.jsonl`。这些文件记录项目 artifact、hash、用户确认点和完整性事件，方便跨电脑迁移和后续审计。
 
@@ -200,8 +192,6 @@ python -m draftpaper_cli.cli search-literature --project <repo>\projects\your_pr
 `write-results` 现在会在结果正文中通过 LaTeX 标签显式指向对应图表，例如 `Figure~\ref{...}` 和 `Table~\ref{...}`。内部 loop 术语、本地路径约束、gate 名称、manifest 信息和项目管理式措辞不会写入论文正文，而是保留在日志、报告或致谢中。`assemble-latex` 会在参考文献之前默认加入致谢，说明 Draftpaper-loop 参与了分阶段文献组织、分析可追溯性、图表清单和论文初稿生成。
 
 主图生成现在采用“严格合同 + 修复优先”的执行逻辑。`plan-figures` 会把 research plan 中的 figure storyboard 写成 `results/figure_contracts.json`，并通过 `results/storyboard_alignment_report.json` 检查后续图表是否仍然对应原始研究计划。验证图、流程图和辅助诊断图可以保留为 supporting figures，但不能静默替代研究计划中要求的主结果图。`generate-analysis-code` 会额外输出 `results/figure_execution_diagnosis.json` 和 `.html`；如果某张主图无法生成，系统会优先判断是缺少数据还是缺少方法代码，然后推荐 `repair-figure-data` 或 `repair-figure-method`。前者会尝试沿用已有数据获取流程、公开数据库/API、远端服务器流程或用户补充 artifact；后者会尝试利用学科插件、项目已有代码、公开科研代码仓库、文献实现仓库或 Codex 生成的项目专属方法代码。只有这些自动修复仍无法产出核心图表时，才进入 `assess-core-evidence` 的人工确认阶段。
-
-`verify-methods` 现在可以直接读取 `methods/method_code_manifest.json`，使用其中的 `verify_command`、声明输出和输入数据完成方法验证，不再要求用户手动复制长命令和所有 `--output`。方法验证会写入 `methods/run_manifest.yaml`，并检查声明输出、主图合同、figure metadata 和 review task coverage；只要这些 hard gate 失败，CLI 就返回非零退出码，后续写作阶段不会把失败的方法或空图当成有效结果。
 
 ## 公开科研代码挖掘
 
@@ -222,7 +212,7 @@ python -m draftpaper_cli.cli bootstrap-discipline-foundation --workflow-map .\mi
 
 ## 第三方 skills 集成
 
-本仓库将 [`Dictation354/paper-fetch-skill`](https://github.com/Dictation354/paper-fetch-skill) vendored 到 `third_party/paper-fetch-skill`，并把可运行 fallback source 打包到 `draftpaper_cli/_vendor/paper_fetch_skill`。adapter 会优先使用 `PATH` 中的 `paper-fetch` 命令；如果不可用，则可使用包内 vendored runtime source。需要更完整的全文/PDF 解析能力时，可安装 `.[fulltext]` optional extra。
+本仓库将 [`Dictation354/paper-fetch-skill`](https://github.com/Dictation354/paper-fetch-skill) vendored 到 `third_party/paper-fetch-skill`。adapter 会优先使用 `PATH` 中的 `paper-fetch` 命令；如果不可用，则可使用 vendored runtime source。
 
 第三方 runtime 使用 MIT License，二次分发时请保留其 license notice。
 
@@ -242,6 +232,8 @@ Draftpaper-loop 以 source-available 形式开放给非商业科研、评估、�
 Draftpaper-loop 使用 DPL schema family 表示本地优先论文 loop 状态，包括 project passport、stage manifest、citation evidence、run manifest、result manifest、artifact hash、claim trace 和 loop event。
 
 当前非商业 source-available 条款、归属声明、商业授权范围、项目名称/商标政策、公开 schema 身份和合规边界见 [`LICENSE`](./LICENSE)、[`NOTICE`](./NOTICE)、[`COMMERCIAL_LICENSE.md`](./COMMERCIAL_LICENSE.md)、[`TRADEMARK.md`](./TRADEMARK.md)、[`COMPLIANCE.md`](./COMPLIANCE.md)、[`docs/DPL_SCHEMA.md`](./docs/DPL_SCHEMA.md) 和 [`docs/FORENSIC_FINGERPRINTING.md`](./docs/FORENSIC_FINGERPRINTING.md)。
+
+本地运营台交付边界、验收命令和商业化试点范围见 [`docs/COMMERCIAL_READINESS.md`](./docs/COMMERCIAL_READINESS.md)。
 
 如需商业授权，请联系：[xiejinhui22@mails.ucas.ac.cn](mailto:xiejinhui22@mails.ucas.ac.cn)。
 
@@ -280,48 +272,6 @@ Draftpaper-loop 使用 DPL schema family 表示本地优先论文 loop 状态，
 </table>
 
 ## 最近更新
-
-### v0.15.9 (2026-07-03) -- pytest CI and discipline-template resource cleanup
-
-- GitHub Actions 改为安装 `.[dev]` 并运行 `python -m pytest`，与本地开发验证路径保持一致。
-- 修复内置学科模板中的 `csv.DictReader(path.open(...))` 直接打开文件模式，统一改为 context manager，避免 ResourceWarning。
-- 本地验证：`python -m pytest`
-- 当前测试规模：219 tests。
-
-### v0.15.8 (2026-07-03) -- discipline template registry validation
-
-- 新增 `draftpaper_cli/template_registry.py` 和 `draftpaper validate-template-registry`，用于检查内置学科插件 manifest、template 文件、fixture、插件 ID 和成熟度元数据。
-- 新增测试，方便后续外部贡献的学科插件在合并前先完成结构检查。
-
-### v0.15.7 (2026-07-03) -- shared IO, LaTeX, and citation utilities
-
-- 新增 `io_utils`、`latex_utils` 和 `citation_utils`，减少 JSON/text 读取、LaTeX 转义、BibTeX 解析和 citation key 解析的重复实现。
-- 将 Methods、Results、Introduction、Discussion、LaTeX assembly 和 quality gate 等高风险模块迁移到共享 helper。
-- 保留 `\cite{}`、`\citep{}` 等常见 LaTeX 引用命令兼容。
-
-### v0.15.6 (2026-07-03) -- audit-driven CLI and gate hardening groundwork
-
-- 新增公共工具层测试，并让 gate 行为围绕统一解析 helper 对齐。
-- 继续保持 `methods/` 作为生成分析代码的 canonical location，`code/` 仅作为兼容输出保留。
-
-### v0.15.5 (2026-07-03) -- manifest-driven method verification and figure contracts
-
-- `verify-methods` 在未传入 `--command` 时会读取 `methods/method_code_manifest.json`，使用生成的 `verify_command`、declared outputs 和 selected input data 完成验证。
-- 方法验证现在检查 `results/figure_contracts.json`；缺失、占位或 metadata 不匹配的主结果图会导致 hard gate 失败。
-- `generate-analysis-code` 会把 `verify_command` 和 `install_plotting_command` 写入 manifest，并推荐更短的 manifest-driven verification command。
-
-### v0.15.4 (2026-07-03) -- packaged paper-fetch fallback and fulltext extras
-
-- 将 paper-fetch runtime 打包到 `draftpaper_cli/_vendor/paper_fetch_skill`，使 wheel 安装也能保留 fallback source，而不是只依赖源码目录中的 `third_party/` 路径。
-- 新增 `fulltext` optional extra，用于安装更重的文章/PDF 全文解析依赖，同时保持默认安装相对轻量。
-- 已用 `python -m pip wheel . --no-deps` 验证 wheel 中包含 vendored paper-fetch CLI 和第三方 license。
-
-### v0.15.3 (2026-07-03) -- hard-gate exit codes and portable project metadata
-
-- 修复 `verify-methods` 的 CLI 退出码语义：当方法验证写入 `status=failed` 时，命令会返回非零退出码，同时继续输出 run manifest JSON，避免 shell、Codex 自动化或 CI 把失败的方法验证误判为成功。
-- 移除新建项目 `project.json` 中的开发者本机历史路径，改为中性的 `legacy_mvp_reference` 说明字段，提升项目在不同电脑、公开示例和 fork 环境中的可迁移性。
-- 新增回归测试，覆盖失败的 `verify-methods` 退出码和新项目元数据不包含本机私有路径。
-- 刷新 README 中的论文生成流程说明，强调当前主流程是 evidence-first：文献和 research plan 之后先完成数据/方法执行、主图生成、result validity 和 core evidence 审阅，再进入 Results、Introduction、Data、Methods 和 Discussion 写作。
 
 ### v0.15.2 (2026-07-02) -- strict figure contracts and repair-first execution
 

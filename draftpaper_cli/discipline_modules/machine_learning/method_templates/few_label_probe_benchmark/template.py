@@ -10,8 +10,7 @@ from pathlib import Path
 
 
 def aggregate_probe_results(*, raw_results_csv: Path, output_csv: Path, metric: str = "macro_f1") -> dict[str, int]:
-    with raw_results_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(raw_results_csv.open("r", encoding="utf-8-sig", newline="")))
     groups: dict[tuple[str, str, str], list[float]] = defaultdict(list)
     for row in rows:
         key = (str(row.get("method", "")), str(row.get("probe_head", "")), str(row.get("fraction", "")))

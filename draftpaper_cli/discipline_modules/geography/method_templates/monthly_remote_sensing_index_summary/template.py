@@ -17,8 +17,7 @@ def summarize_monthly_indices(
     month_column: str,
     value_columns: list[str],
 ) -> dict[str, int]:
-    with input_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(input_csv.open("r", encoding="utf-8-sig", newline="")))
     grouped: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     for row in rows:
         month = str(row.get(month_column, "")).strip()

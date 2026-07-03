@@ -17,8 +17,7 @@ def _float(value: str) -> float:
 
 
 def compute_embedding_health(*, embedding_csv: Path, output_csv: Path, embedding_prefix: str = "e") -> dict[str, float]:
-    with embedding_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(embedding_csv.open("r", encoding="utf-8-sig", newline="")))
     columns = [col for col in (rows[0].keys() if rows else []) if col.startswith(embedding_prefix)]
     vectors = [[_float(row[col]) for col in columns] for row in rows]
     norms = [math.sqrt(sum(value * value for value in vector)) for vector in vectors]

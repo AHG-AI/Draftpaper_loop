@@ -22,8 +22,7 @@ def cluster_temporal_profiles(
     cluster_count: int = 3,
     iterations: int = 20,
 ) -> dict[str, int]:
-    with input_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(input_csv.open("r", encoding="utf-8-sig", newline="")))
     samples: list[tuple[str, list[float]]] = []
     for row in rows:
         try:

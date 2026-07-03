@@ -11,8 +11,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from .citation_utils import bibtex_keys_in_text, citation_keys_in_text, has_citation_command
-from .io_utils import read_json, read_text
 from .project_scaffold import _write_json, utc_now
 from .project_state import load_project, update_stage_status, validate_project
 from .writing_quality import evaluate_section_quality
@@ -68,6 +66,8 @@ FINAL_INPUT_STAGES = [
     "discussion",
     "latex",
 ]
+RESULT_CITATION_PATTERN = re.compile(r"\\(?:cite|citep|citet|parencite|autocite|textcite)\*?(?:\[[^\]]*\]){0,2}\{", re.IGNORECASE)
+CITATION_PATTERN = re.compile(r"\\(?:cite|citep|citet|parencite|autocite|textcite)\*?(?:\[[^\]]*\]){0,2}\{([^{}]+)\}", re.IGNORECASE)
 FILESYSTEM_PATTERN = re.compile(
     r"([A-Za-z]:\\|(?:data|results|code)/(?:raw|processed|figures|tables|scripts)/|\b[\w.-]+\.(?:csv|tsv|xlsx|xls|json|py|svg|png|jpg|jpeg)\b)",
     re.IGNORECASE,
@@ -88,20 +88,32 @@ class QualityGateError(RuntimeError):
 
 
 def _read_text(path: Path) -> str:
-    return read_text(path)
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except Exception:
+        return ""
 
 
 def _read_json(path: Path) -> dict[str, Any]:
-    payload = read_json(path, {})
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {}
     return payload if isinstance(payload, dict) else {}
 
 
 def _bibtex_keys(content: str) -> set[str]:
-    return bibtex_keys_in_text(content)
+    return set(re.findall(r"@\w+\s*\{\s*([^,\s]+)", content))
 
 
 def _latex_citation_keys(content: str) -> set[str]:
-    return citation_keys_in_text(content)
+    keys: set[str] = set()
+    for match in CITATION_PATTERN.finditer(content):
+        for key in match.group(1).split(","):
+            clean = key.strip()
+            if clean:
+                keys.add(clean)
+    return keys
 
 
 def _read_citation_evidence(path: Path) -> list[dict[str, str]]:
@@ -304,7 +316,7 @@ def _check_manuscript_narrative_hygiene(project_path: Path, issues: list[Quality
 
 def _check_results(project_path: Path, issues: list[QualityIssue]) -> dict[str, Any]:
     results_tex = _read_text(project_path / "results" / "results.tex")
-    citation_count = 1 if has_citation_command(results_tex) else 0
+    citation_count = len(RESULT_CITATION_PATTERN.findall(results_tex))
     if citation_count:
         issues.append(QualityIssue("error", "results_contains_citation", "Results section must not contain citation commands.", "results/results.tex"))
 
@@ -362,7 +374,7 @@ def _check_results(project_path: Path, issues: list[QualityIssue]) -> dict[str, 
             ):
                 issues.append(QualityIssue("error", "figure_metadata_not_scientific", f"Figure metadata does not satisfy scientific-result requirements: {relative}", "results/figure_metadata.json"))
         text = " ".join(str(entry.get(key) or "") for key in ("caption_draft", "result_claim"))
-        if has_citation_command(text):
+        if RESULT_CITATION_PATTERN.search(text):
             issues.append(QualityIssue("error", "result_manifest_contains_citation", "Results manifest contains a citation command.", "results/result_manifest.yaml"))
     return {
         "artifact_count": len(entries),

@@ -1,0 +1,23 @@
+[Unit]
+Description=Draftpaper Loop Service Console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=draftpaper
+Group=draftpaper
+WorkingDirectory=/opt/draftpaper-loop
+EnvironmentFile=/etc/draftpaper-loop/draftpaper-loop.env
+ExecStart=/opt/draftpaper-loop/.venv/bin/python /opt/draftpaper-loop/scripts/serviceconsole_app.py --host 127.0.0.1 --port ${DRAFTPAPER_PORT}
+Restart=on-failure
+RestartSec=5
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/draftpaper-loop /var/log/draftpaper-loop /etc/draftpaper-loop
+
+[Install]
+WantedBy=multi-user.target

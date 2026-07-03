@@ -19,8 +19,7 @@ def smooth_phenology_curve(
 ) -> dict[str, float | str | int]:
     if window < 1:
         raise ValueError("window must be positive")
-    with input_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(input_csv.open("r", encoding="utf-8-sig", newline="")))
     series: list[tuple[str, float]] = []
     for row in rows:
         try:

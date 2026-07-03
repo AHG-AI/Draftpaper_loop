@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -438,6 +439,42 @@ class ReferencesTests(unittest.TestCase):
             search_queries = json.loads((project.path / "references" / "search_queries.json").read_text(encoding="utf-8"))
             self.assertIn("query_plan", search_queries)
             self.assertGreaterEqual(len(search_queries["query_plan"]), 10)
+
+    def test_live_search_can_be_bounded_by_environment_query_limit(self) -> None:
+        from draftpaper_cli.literature_search import search_literature_for_project
+
+        calls = []
+
+        def fake_search(query: str, limit: int = 30) -> list[dict[str, object]]:
+            calls.append((query, limit))
+            return [
+                {
+                    "title": f"Bounded result for {query[:24]}",
+                    "authors": ["A. Author"],
+                    "year": "2025",
+                    "abstract": f"Relevant paper for {query}.",
+                    "publication": "Journal of Research Automation",
+                    "citation_count": 1,
+                    "source": "semantic_scholar",
+                }
+            ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            project = create_project(
+                root=tmp,
+                idea="Auditable AI research loop",
+                field="machine learning",
+                target_journal="General Academic Journal",
+            )
+
+            with patch.dict(os.environ, {"DRAFTPAPER_SEARCH_MAX_QUERIES": "2"}):
+                with patch("draftpaper_cli.literature_search.search_free_literature", side_effect=fake_search):
+                    search_literature_for_project(project.path, query="AI research loop", limit=30)
+
+            self.assertEqual(len(calls), 2)
+            search_queries = json.loads((project.path / "references" / "search_queries.json").read_text(encoding="utf-8"))
+            self.assertEqual(search_queries["live_query_limit"], 2)
+            self.assertEqual(search_queries["live_query_count"], 2)
 
     def test_duplicate_paper_can_support_multiple_reference_contexts(self) -> None:
         from draftpaper_cli.references import write_reference_outputs

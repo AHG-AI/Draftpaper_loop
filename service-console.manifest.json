@@ -1,0 +1,362 @@
+{
+  "schema_version": "ahouse.service-console/v1",
+  "name": "DraftpaperLoop",
+  "description": "Local-first research paper loop engine with project passport, staged evidence gates, citation audit, revision routing, and a local operator console.",
+  "type": "tool",
+  "owner": "research-tooling",
+  "system": "paper-loop",
+  "domain": "research-writing",
+  "lifecycle": "development",
+  "tags": ["draftpaper-loop", "research", "local-tool", "service-console", "paper-writing"],
+  "environments": [
+    {
+      "id": "local-mac",
+      "label": "Mac local",
+      "kind": "local-mac",
+      "base_url": "http://127.0.0.1:4888",
+      "default": true
+    }
+  ],
+  "scripts": [
+    {
+      "id": "deploy-local",
+      "label": "Local console · http://127.0.0.1:4888",
+      "mode": "local",
+      "command": "bash scripts/deploy_local.sh",
+      "environment": "local-mac",
+      "health_checks": ["local-health"]
+    }
+  ],
+  "access_urls": [
+    {
+      "id": "local",
+      "label": "Draftpaper Loop Console",
+      "url": "http://127.0.0.1:4888/",
+      "environment": "local-mac",
+      "primary": true
+    },
+    {
+      "id": "local-health",
+      "label": "Health",
+      "url": "http://127.0.0.1:4888/health",
+      "environment": "local-mac"
+    },
+    {
+      "id": "projects-json",
+      "label": "Projects API",
+      "url": "http://127.0.0.1:4888/api/projects",
+      "environment": "local-mac"
+    },
+    {
+      "id": "commercial-readiness",
+      "label": "Commercial Readiness API",
+      "url": "http://127.0.0.1:4888/api/commercial-readiness",
+      "environment": "local-mac"
+    },
+    {
+      "id": "handoff-readiness",
+      "label": "Handoff Readiness API",
+      "url": "http://127.0.0.1:4888/api/handoff-readiness",
+      "environment": "local-mac"
+    },
+    {
+      "id": "hosted-readiness",
+      "label": "Hosted Readiness API",
+      "url": "http://127.0.0.1:4888/api/hosted-readiness",
+      "environment": "local-mac"
+    },
+    {
+      "id": "hosted-readiness-draft",
+      "label": "Hosted Readiness Draft API",
+      "url": "http://127.0.0.1:4888/api/hosted-readiness-draft",
+      "environment": "local-mac"
+    },
+    {
+      "id": "access-policy",
+      "label": "Access Policy API",
+      "url": "http://127.0.0.1:4888/api/access-policy",
+      "environment": "local-mac"
+    },
+    {
+      "id": "quota",
+      "label": "Quota API",
+      "url": "http://127.0.0.1:4888/api/quota",
+      "environment": "local-mac"
+    },
+    {
+      "id": "billing",
+      "label": "Billing Report API",
+      "url": "http://127.0.0.1:4888/api/billing",
+      "environment": "local-mac"
+    },
+    {
+      "id": "license",
+      "label": "Commercial License Grant API",
+      "url": "http://127.0.0.1:4888/api/license",
+      "environment": "local-mac"
+    },
+    {
+      "id": "license-entitlements",
+      "label": "License Entitlements API",
+      "url": "http://127.0.0.1:4888/api/license-entitlements",
+      "environment": "local-mac"
+    },
+    {
+      "id": "claim-confirmation",
+      "label": "Claim Confirmation Evidence API",
+      "url": "http://127.0.0.1:4888/api/claim-confirmation",
+      "environment": "local-mac"
+    },
+    {
+      "id": "claim-confirmation-draft",
+      "label": "Claim Confirmation Draft API",
+      "url": "http://127.0.0.1:4888/api/project-claim-confirmation-draft",
+      "environment": "local-mac"
+    },
+    {
+      "id": "license-approval",
+      "label": "Commercial Approval Evidence API",
+      "url": "http://127.0.0.1:4888/api/license-approval",
+      "environment": "local-mac"
+    },
+    {
+      "id": "commercial-approval-draft",
+      "label": "Commercial Approval Draft API",
+      "url": "http://127.0.0.1:4888/api/commercial-approval-draft",
+      "environment": "local-mac"
+    },
+    {
+      "id": "release-trust",
+      "label": "Release Trust Evidence API",
+      "url": "http://127.0.0.1:4888/api/release-trust",
+      "environment": "local-mac"
+    },
+    {
+      "id": "release-trust-draft",
+      "label": "Release Trust Draft API",
+      "url": "http://127.0.0.1:4888/api/release-trust-draft",
+      "environment": "local-mac"
+    },
+    {
+      "id": "security-review",
+      "label": "Security Review Evidence API",
+      "url": "http://127.0.0.1:4888/api/security-review",
+      "environment": "local-mac"
+    },
+    {
+      "id": "security-review-draft",
+      "label": "Security Review Draft API",
+      "url": "http://127.0.0.1:4888/api/security-review-draft",
+      "environment": "local-mac"
+    },
+    {
+      "id": "security-audit",
+      "label": "Security Audit API",
+      "url": "http://127.0.0.1:4888/api/security-audit",
+      "environment": "local-mac"
+    },
+    {
+      "id": "support-bundle",
+      "label": "Support Bundle",
+      "url": "http://127.0.0.1:4888/api/support-bundle",
+      "environment": "local-mac"
+    },
+    {
+      "id": "backups",
+      "label": "Backups API",
+      "url": "http://127.0.0.1:4888/api/backups",
+      "environment": "local-mac"
+    },
+    {
+      "id": "backup-verify",
+      "label": "Backup Verification API",
+      "url": "http://127.0.0.1:4888/api/backups/verify",
+      "environment": "local-mac"
+    },
+    {
+      "id": "backup-rehearsals",
+      "label": "Backup Rehearsals API",
+      "url": "http://127.0.0.1:4888/api/backups/rehearsals",
+      "environment": "local-mac"
+    }
+  ],
+  "health_checks": [
+    {
+      "id": "local-health",
+      "label": "Local readiness",
+      "type": "http",
+      "kind": "readiness",
+      "url": "http://127.0.0.1:4888/health",
+      "expected_status": [200],
+      "timeout_seconds": 3,
+      "required": true,
+      "environment": "local-mac"
+    }
+  ],
+  "dependencies": [
+    {
+      "id": "python",
+      "label": "Python 3.10+",
+      "type": "runtime",
+      "required": true,
+      "environment": "local-mac"
+    },
+    {
+      "id": "draftpaper-cli",
+      "label": "draftpaper CLI",
+      "type": "local-package",
+      "required": true,
+      "environment": "local-mac"
+    }
+  ],
+  "deployments": [
+    {
+      "id": "local",
+      "label": "Mac local",
+      "mode": "local",
+      "target": "127.0.0.1:4888",
+      "environment": "local-mac",
+      "script_id": "deploy-local"
+    }
+  ],
+  "secrets_policy": {
+    "runtime_env_files": [".env.local"],
+    "forbidden_in_repo": [".env", ".env.*"],
+    "notes": "Zotero, SerpApi, Semantic Scholar keys, optional DRAFTPAPER_CONSOLE_TOKEN, DRAFTPAPER_CONSOLE_USERS_FILE, DRAFTPAPER_BILLING_RATES_FILE, DRAFTPAPER_LICENSE_FILE, DRAFTPAPER_CLAIM_CONFIRMATION_FILE, DRAFTPAPER_CLAIM_CONFIRMATION_PROJECT, DRAFTPAPER_COMMERCIAL_APPROVAL_FILE, DRAFTPAPER_RELEASE_TRUST_FILE, DRAFTPAPER_SECURITY_REVIEW_FILE, DRAFTPAPER_HANDOFF_ENV_FILE, DRAFTPAPER_HOSTED_READINESS_FILE, DRAFTPAPER_BACKUPS_DIR, and local operator limits such as DRAFTPAPER_MAX_CONCURRENT_JOBS stay in local/private runtime files. DRAFTPAPER_LICENSE_PUBLIC_KEY_SHA256 is a non-secret license verification trust pin. Release packaging excludes .env*, .pem, .key, .sig, and known private runtime JSON files such as console-users.json, billing-rates.json, commercial-license-grant.json, claim-confirmation.json, claim-confirmation-verification.json, commercial-approval.json, commercial-approval-verification.json, release-trust.json, release-trust-verification.json, security-review.json, security-review-verification.json, and active-handoff.env. License signatures and public keys generated for a customer handoff belong in private runtime handoff directories, not the source package. The console never returns secret values."
+  },
+  "smoke_tests": [
+    {
+      "id": "health-smoke",
+      "label": "Health smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/health",
+      "expected_status": [200]
+    },
+    {
+      "id": "projects-smoke",
+      "label": "Projects API smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/projects",
+      "expected_status": [200]
+    },
+    {
+      "id": "commercial-readiness-smoke",
+      "label": "Commercial readiness smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/commercial-readiness",
+      "expected_status": [200]
+    },
+    {
+      "id": "access-policy-smoke",
+      "label": "Access policy smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/access-policy",
+      "expected_status": [200]
+    },
+    {
+      "id": "quota-smoke",
+      "label": "Quota API smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/quota",
+      "expected_status": [200]
+    },
+    {
+      "id": "billing-smoke",
+      "label": "Billing report smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/billing",
+      "expected_status": [200]
+    },
+    {
+      "id": "license-smoke",
+      "label": "Commercial license grant smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/license",
+      "expected_status": [200]
+    },
+    {
+      "id": "license-entitlements-smoke",
+      "label": "License entitlements smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/license-entitlements",
+      "expected_status": [200]
+    },
+    {
+      "id": "license-approval-smoke",
+      "label": "Commercial approval evidence smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/license-approval",
+      "expected_status": [200]
+    },
+    {
+      "id": "claim-confirmation-smoke",
+      "label": "Claim confirmation evidence smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/claim-confirmation",
+      "expected_status": [200]
+    },
+    {
+      "id": "release-trust-smoke",
+      "label": "Release trust evidence smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/release-trust",
+      "expected_status": [200]
+    },
+    {
+      "id": "security-review-smoke",
+      "label": "Security review evidence smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/security-review",
+      "expected_status": [200]
+    },
+    {
+      "id": "handoff-readiness-smoke",
+      "label": "Handoff readiness smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/handoff-readiness",
+      "expected_status": [200]
+    },
+    {
+      "id": "hosted-readiness-smoke",
+      "label": "Hosted readiness smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/hosted-readiness",
+      "expected_status": [200]
+    },
+    {
+      "id": "security-audit-smoke",
+      "label": "Security audit smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/security-audit",
+      "expected_status": [200]
+    },
+    {
+      "id": "support-bundle-smoke",
+      "label": "Support bundle smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/support-bundle",
+      "expected_status": [200]
+    },
+    {
+      "id": "backups-smoke",
+      "label": "Backups API smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/backups",
+      "expected_status": [200]
+    },
+    {
+      "id": "backup-verify-smoke",
+      "label": "Backup verification smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/backups/verify",
+      "expected_status": [200]
+    },
+    {
+      "id": "backup-rehearsals-smoke",
+      "label": "Backup rehearsals smoke",
+      "type": "http",
+      "url": "http://127.0.0.1:4888/api/backups/rehearsals",
+      "expected_status": [200]
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+services:
+  draftpaper-loop:
+    build:
+      context: ../..
+      dockerfile: deploy/production/Dockerfile
+    image: draftpaper-loop:production
+    restart: unless-stopped
+    env_file:
+      - ./draftpaper-loop.env
+    ports:
+      - "127.0.0.1:4888:4888"
+    volumes:
+      - draftpaper_projects:/data/projects
+      - draftpaper_runtime:/data/runtime
+      - draftpaper_backups:/data/backups
+      - ./private:/run/secrets/draftpaper-loop:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import json,urllib.request; json.load(urllib.request.urlopen('http://127.0.0.1:4888/health', timeout=3))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  draftpaper_projects:
+  draftpaper_runtime:
+  draftpaper_backups:

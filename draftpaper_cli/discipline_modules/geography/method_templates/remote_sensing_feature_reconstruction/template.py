@@ -24,8 +24,7 @@ def run_remote_sensing_feature_reconstruction(
     or dataset id. Project-specific code should bind those values outside this
     reusable template.
     """
-    with input_table.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(input_table.open("r", encoding="utf-8-sig", newline="")))
     pairs: list[tuple[float, float]] = []
     for row in rows:
         if quality_column and str(row.get(quality_column, "")).strip().lower() in {"bad", "invalid", "0"}:

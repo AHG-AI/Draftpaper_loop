@@ -238,7 +238,10 @@ def create_project(
         "created_at": now,
         "updated_at": now,
         "current_stage": "idea",
-        "legacy_mvp_reference": "legacy MVP design notes",
+        "source_mvp": {
+            "path": "D:\\DraftAI_agent",
+            "reuse_policy": "Check this MVP for reusable literature, export, validation, and generation utilities before adding new workflow code.",
+        },
         "stages": _build_stage_metadata(),
     }
 

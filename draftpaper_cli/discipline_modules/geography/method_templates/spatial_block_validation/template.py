@@ -18,8 +18,7 @@ def run_spatial_block_validation(
     output_table: Path,
 ) -> dict[str, float]:
     """Generic leave-group-out validation skeleton for geography workflows."""
-    with input_table.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+    rows = list(csv.DictReader(input_table.open("r", encoding="utf-8-sig", newline="")))
     groups: dict[str, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
         group = str(row.get(group_column, "")).strip()

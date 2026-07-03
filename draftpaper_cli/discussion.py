@@ -10,8 +10,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from .citation_utils import bibtex_keys_in_text
-from .latex_utils import safe_latex_text
 from .project_scaffold import _write_json
 from .project_state import load_project, update_stage_status
 from .reference_usage import ensure_reference_usage_plan, missing_entries_for_section
@@ -44,7 +42,7 @@ def _read_citation_evidence(path: Path) -> list[dict[str, str]]:
 
 
 def _bibtex_keys(content: str) -> set[str]:
-    return bibtex_keys_in_text(content)
+    return set(re.findall(r"@\w+\s*\{\s*([^,\s]+)", content))
 
 
 def _require_inputs(project_path: Path) -> tuple[str, str, str, list[dict[str, str]]]:
@@ -71,12 +69,22 @@ def _require_inputs(project_path: Path) -> tuple[str, str, str, list[dict[str, s
 
 
 def _safe_latex_text(text: str) -> str:
-    return safe_latex_text(text)
+    replacements = {
+        "&": r"\&",
+        "%": r"\%",
+        "$": r"\$",
+        "#": r"\#",
+        "_": r"\_",
+        "{": r"\{",
+        "}": r"\}",
+        "~": r"\textasciitilde{}",
+        "^": r"\textasciicircum{}",
+    }
+    return "".join(replacements.get(char, char) for char in str(text or ""))
 
 
 def _paragraph(text: str) -> str:
     escaped = _safe_latex_text(text)
-    escaped = re.sub(r"\\textbackslash\{\}citep\\\{([^{}\\]+)\\\}", r"\\citep{\1}", escaped)
     escaped = re.sub(r"\\citep\\\{([^{}\\]+)\\\}", r"\\citep{\1}", escaped)
     return escaped
 

@@ -16,12 +16,11 @@ def write_observed_predicted_metrics(
     output_csv: Path,
 ) -> dict[str, float]:
     pairs: list[tuple[float, float]] = []
-    with input_csv.open("r", encoding="utf-8-sig", newline="") as handle:
-        for row in csv.DictReader(handle):
-            try:
-                pairs.append((float(row[observed_column]), float(row[predicted_column])))
-            except (KeyError, ValueError):
-                continue
+    for row in csv.DictReader(input_csv.open("r", encoding="utf-8-sig", newline="")):
+        try:
+            pairs.append((float(row[observed_column]), float(row[predicted_column])))
+        except (KeyError, ValueError):
+            continue
     if not pairs:
         raise ValueError("No valid observed-predicted pairs")
     y = [item[0] for item in pairs]

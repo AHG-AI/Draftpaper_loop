@@ -93,6 +93,25 @@ def _unique_terms(terms: list[str], limit: int = 6) -> list[str]:
     return unique
 
 
+def _env_positive_int(name: str, default: int, *, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None or str(raw).strip() == "":
+        return default
+    try:
+        value = int(str(raw).strip())
+    except ValueError:
+        return default
+    return max(minimum, value)
+
+
+def _request_timeout(default: int = 12) -> int:
+    return _env_positive_int("DRAFTPAPER_SEARCH_TIMEOUT_SECONDS", default, minimum=1)
+
+
+def _live_query_limit() -> int:
+    return _env_positive_int("DRAFTPAPER_SEARCH_MAX_QUERIES", 0, minimum=0)
+
+
 def _split_semicolon_terms(text: str, limit: int = 5) -> list[str]:
     parts = re.split(r"[;；\n]+", text or "")
     return _unique_terms([part.strip(" -.") for part in parts if part.strip()], limit=limit)
@@ -385,10 +404,10 @@ def build_context_search_queries(project: str | Path, query: str | None = None) 
     }
 
 
-def _get_json(url: str, params: dict[str, Any], headers: dict[str, str] | None = None, timeout: int = 12) -> dict[str, Any]:
+def _get_json(url: str, params: dict[str, Any], headers: dict[str, str] | None = None, timeout: int | None = None) -> dict[str, Any]:
     full_url = f"{url}?{urllib.parse.urlencode(params)}"
     request = urllib.request.Request(full_url, headers=headers or {})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with urllib.request.urlopen(request, timeout=_request_timeout(timeout or 12)) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -465,7 +484,7 @@ def search_arxiv(query: str, limit: int = 30) -> list[dict[str, Any]]:
         "sortOrder": "descending",
     })
     try:
-        with urllib.request.urlopen(f"https://export.arxiv.org/api/query?{params}", timeout=12) as response:
+        with urllib.request.urlopen(f"https://export.arxiv.org/api/query?{params}", timeout=_request_timeout(12)) as response:
             root = ET.fromstring(response.read().decode("utf-8"))
     except Exception:
         return []
@@ -572,9 +591,27 @@ def dedupe_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return normalize_reference_items(items)
 
 
+def _enabled_search_providers() -> list[tuple[str, Any]]:
+    providers = {
+        "semantic_scholar": search_semantic_scholar,
+        "arxiv": search_arxiv,
+        "crossref": search_crossref,
+        "serpapi": search_serpapi,
+    }
+    raw = os.getenv("DRAFTPAPER_SEARCH_PROVIDERS")
+    if not raw:
+        return list(providers.items())
+    selected: list[tuple[str, Any]] = []
+    for name in raw.split(","):
+        key = name.strip().lower().replace("-", "_")
+        if key in providers:
+            selected.append((key, providers[key]))
+    return selected or list(providers.items())
+
+
 def search_free_literature(query: str, limit: int = 30) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
-    for provider in (search_semantic_scholar, search_arxiv, search_crossref, search_serpapi):
+    for _provider_name, provider in _enabled_search_providers():
         results.extend(provider(query, limit=limit))
         results = dedupe_items(results)
     return results[:limit]
@@ -691,6 +728,10 @@ def search_literature_for_project(
             search_queries.update({str(key): value for key, value in payload["search_queries"].items()})
     else:
         items = []
+        live_query_limit = _live_query_limit()
+        live_query_count = 0
+        if live_query_limit:
+            search_queries["live_query_limit"] = live_query_limit
         query_plan = search_queries.get("query_plan") if isinstance(search_queries.get("query_plan"), list) else []
         if query_plan:
             iterable_queries = [
@@ -710,10 +751,13 @@ def search_literature_for_project(
                 for context_query in _as_query_list(context_query_value):
                     iterable_queries.append((context, context_query, {}))
         for context, context_query, plan_entry in iterable_queries:
+                if live_query_limit and live_query_count >= live_query_limit:
+                    break
                 combination_level = str(plan_entry.get("combination_level") or "")
                 per_query_limit = min(limit, 2) if context in {"data", "methods"} or combination_level == "all" else min(limit, 6)
                 if context == "target_journal_anchor":
                     per_query_limit = min(limit, 2)
+                live_query_count += 1
                 context_items = search_free_literature(context_query, limit=per_query_limit)
                 for item in context_items:
                     item["search_context"] = context
@@ -738,8 +782,11 @@ def search_literature_for_project(
                 context_query = str(plan_entry.get("query") or "")
                 if not context_query or context_query.lower() in existing_queries:
                     continue
+                if live_query_limit and live_query_count >= live_query_limit:
+                    break
                 context = str(plan_entry.get("context") or "introduction")
                 fallback_limit = min(limit, 2) if context in {"data", "methods"} else min(limit, 6)
+                live_query_count += 1
                 context_items = search_free_literature(context_query, limit=fallback_limit)
                 for item in context_items:
                     item["search_context"] = context
@@ -761,6 +808,7 @@ def search_literature_for_project(
                     break
             if fallback_entries:
                 search_queries["fallback_query_plan"] = fallback_entries
+        search_queries["live_query_count"] = live_query_count
         items, _manifest = enrich_with_paper_fetch(project, items)
     result = write_reference_outputs(project, list(items or []), query=final_query, search_queries=search_queries)
     manifest_path = state.path / "references" / "zotero_collection_manifest.json"
