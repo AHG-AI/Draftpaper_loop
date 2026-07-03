@@ -1236,6 +1236,16 @@ python scripts/build_commercial_launch_package.py \
   --output-dir var/private/launch-package-CUST-A
 ```
 
+The Service Console exposes the same flow through `POST
+/api/commercial-launch-package` and the `Launch` button. Provide the acceptance
+report, release zip, release sidecars, handoff dossier, and support bundle; for
+`hosted_saas`, also provide the hosted readiness dossier. When no explicit output
+path is supplied, the console writes owner-only evidence under
+`runtime/commercial_launch_packages/`, then immediately reruns
+`scripts/verify_commercial_launch_package.py` against the generated zip. A
+verified launch zip is automatically usable as the Commercial Operations Report
+launch-package input.
+
 Then independently reverify the package before sending or archiving it:
 
 ```bash

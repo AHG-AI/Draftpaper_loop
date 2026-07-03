@@ -144,6 +144,18 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("releaseSigningKey", html)
         self.assertIn("releasePublicKey", html)
         self.assertIn("releaseRequireSignature", html)
+        self.assertIn("launchPackageBtn", html)
+        self.assertIn("launchAcceptanceReportPath", html)
+        self.assertIn("launchOutputDir", html)
+        self.assertIn("launchOutputZipPath", html)
+        self.assertIn("launchTargetTrack", html)
+        self.assertIn("launchReleaseManifestPath", html)
+        self.assertIn("launchSha256Path", html)
+        self.assertIn("launchSignaturePath", html)
+        self.assertIn("launchPublicKeyPath", html)
+        self.assertIn("launchHandoffDossierPath", html)
+        self.assertIn("launchSupportBundlePath", html)
+        self.assertIn("/api/commercial-launch-package", html)
         self.assertIn("paidConfigBtn", html)
         self.assertIn("suiteBtn", html)
         self.assertIn("opsReportBtn", html)
@@ -272,6 +284,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("release_package_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_readiness_dossier", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_launch_package", {item["id"] for item in readiness["checks"]})
+        self.assertIn("commercial_launch_package_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_operations_report", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_operations_report_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
@@ -375,6 +388,95 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertEqual(captured["verify_kwargs"]["public_key_path"], Path(report["signature"]["public_key_path"]).resolve())
             self.assertIn("release_packages", str(Path(report["output_dir"])))
             self.assertNotIn(str(signing_key), json.dumps(report))
+
+    def test_build_commercial_launch_package_from_console_reverifies_zip(self) -> None:
+        portal = load_portal_module()
+        captured: dict[str, object] = {}
+
+        def fake_build_commercial_launch_package(**kwargs):
+            captured.update(kwargs)
+            output_dir = Path(kwargs["output_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.chmod(0o700)
+            zip_path = output_dir / "commercial-launch-package.zip"
+            package_path = output_dir / "commercial-launch-package.json"
+            summary_path = output_dir / "commercial-launch-summary.json"
+            for path in [zip_path, package_path, summary_path]:
+                path.write_text("{}\n", encoding="utf-8")
+                path.chmod(0o600)
+            return {
+                "status": "ready",
+                "target_track": kwargs["target_track"],
+                "zip_path": str(zip_path),
+                "package_path": str(package_path),
+                "summary_path": str(summary_path),
+                "zip_sha256": "d" * 64,
+                "package_sha256": "e" * 64,
+                "summary": {"checks": 13, "errors": 0, "warnings": 0},
+            }
+
+        def fake_verify_commercial_launch_package(path):
+            captured["verify_path"] = path
+            return {"status": "verified", "zip_path": str(path), "summary": {"checks": 14, "errors": 0, "warnings": 0}}
+
+        builder = type("FakeLaunchBuilder", (), {"build_commercial_launch_package": staticmethod(fake_build_commercial_launch_package)})
+        verifier = type("FakeLaunchVerifier", (), {"verify_commercial_launch_package": staticmethod(fake_verify_commercial_launch_package)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            artifact_names = [
+                "handoff-acceptance.json",
+                "release.zip",
+                "release.manifest.json",
+                "release.zip.sha256",
+                "release.zip.sig",
+                "release.public.pem",
+                "handoff-dossier.zip",
+                "support-bundle.zip",
+            ]
+            artifacts: dict[str, Path] = {}
+            for name in artifact_names:
+                path = root / name
+                path.write_text("artifact\n", encoding="utf-8")
+                artifacts[name] = path
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_commercial_launch_package_builder_module", return_value=builder):
+                    with patch.object(portal, "_commercial_launch_package_verifier_module", return_value=verifier):
+                        report = portal.build_commercial_launch_package_from_console(
+                            acceptance_report=str(artifacts["handoff-acceptance.json"]),
+                            release_zip=str(artifacts["release.zip"]),
+                            release_manifest=str(artifacts["release.manifest.json"]),
+                            release_sha256_file=str(artifacts["release.zip.sha256"]),
+                            release_signature=str(artifacts["release.zip.sig"]),
+                            release_public_key=str(artifacts["release.public.pem"]),
+                            handoff_dossier=str(artifacts["handoff-dossier.zip"]),
+                            support_bundle=str(artifacts["support-bundle.zip"]),
+                            customer_id="CUST-A",
+                            customer_name="Customer A",
+                            context=portal._local_admin_context(),
+                        )
+
+            zip_path = Path(report["zip_path"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.commercial-launch-package-build/v1")
+            self.assertEqual(report["status"], "verified")
+            self.assertEqual(report["launch_status"], "ready")
+            self.assertEqual(report["verification_status"], "verified")
+            self.assertEqual(captured["target_track"], "paid_local_handoff")
+            self.assertEqual(captured["acceptance_report"], artifacts["handoff-acceptance.json"].resolve())
+            self.assertEqual(captured["release_zip"], artifacts["release.zip"].resolve())
+            self.assertEqual(captured["release_manifest"], artifacts["release.manifest.json"].resolve())
+            self.assertEqual(captured["release_sha256_file"], artifacts["release.zip.sha256"].resolve())
+            self.assertEqual(captured["release_signature"], artifacts["release.zip.sig"].resolve())
+            self.assertEqual(captured["release_public_key"], artifacts["release.public.pem"].resolve())
+            self.assertEqual(captured["handoff_dossier"], artifacts["handoff-dossier.zip"].resolve())
+            self.assertEqual(captured["support_bundle"], artifacts["support-bundle.zip"].resolve())
+            self.assertEqual(captured["verify_path"], zip_path.resolve())
+            self.assertTrue(zip_path.exists())
+            self.assertEqual(zip_path.stat().st_mode & 0o077, 0)
+            self.assertIn("commercial_launch_packages", str(Path(report["output_dir"])))
 
     def test_generate_paid_handoff_config_from_console_activates_current_process(self) -> None:
         portal = load_portal_module()
