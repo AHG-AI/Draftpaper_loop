@@ -180,6 +180,9 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("opsTimeout", html)
         self.assertIn("opsRequireLaunchPackage", html)
         self.assertIn("opsRequireReady", html)
+        self.assertIn("evidencePackBtn", html)
+        self.assertIn("evidenceOutputDir", html)
+        self.assertIn("evidenceTargetTrack", html)
         self.assertIn("installReleaseZipPath", html)
         self.assertIn("installRootPath", html)
         self.assertIn("installManifestPath", html)
@@ -213,6 +216,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/paid-handoff-config", html)
         self.assertIn("/api/commercial-acceptance-suite", html)
         self.assertIn("/api/commercial-operations-report", html)
+        self.assertIn("/api/commercial-evidence-pack", html)
         self.assertIn("/api/verified-release-install", html)
         self.assertIn("/api/hosted-readiness-draft", html)
         self.assertIn("/api/hosted-readiness-finalize", html)
@@ -293,6 +297,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("commercial_operations_report_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite_console", {item["id"] for item in readiness["checks"]})
+        self.assertIn("commercial_evidence_pack_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("verified_release_install_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("paid_handoff_config_generation", {item["id"] for item in readiness["checks"]})
         self.assertIn("sample_workflow_acceptance", {item["id"] for item in readiness["checks"]})
@@ -1424,6 +1429,58 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "draftpaper.security-review/v1")
         self.assertEqual(payload["status"], "draft")
         self.assertTrue(payload["security_audit_sha256"])
+
+    def test_build_commercial_evidence_pack_marks_missing_external_evidence_blocking(self) -> None:
+        portal = load_portal_module()
+
+        def report(status: str, *, path_key: str = "", path_value: str = "") -> dict[str, object]:
+            payload: dict[str, object] = {
+                "status": status,
+                "summary": {"checks": 2, "passed": 2 if status in {"verified", "ready"} else 0, "errors": 0 if status in {"verified", "ready"} else 1, "warnings": 0},
+                "checks": [],
+            }
+            if path_key:
+                payload[path_key] = path_value
+            return payload
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            claim_file = Path(tmp) / "claim-confirmation.json"
+            release_trust_file = Path(tmp) / "release-trust.json"
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "claim_confirmation_summary", return_value=report("verified", path_key="confirmation_file", path_value=str(claim_file))):
+                    with patch.object(portal, "commercial_approval_summary", return_value=report("unconfigured")):
+                        with patch.object(portal, "release_trust_summary", return_value=report("verified", path_key="trust_file", path_value=str(release_trust_file))):
+                            with patch.object(portal, "security_review_summary", return_value=report("attention", path_key="review_file", path_value=str(Path(tmp) / "security-review.json"))):
+                                with patch.object(portal, "hosted_readiness_summary", return_value=report("not_ready")):
+                                    with patch.object(portal, "commercial_readiness", return_value={"commercial_grade": "local_operator_pilot_ready", "readiness_tracks": [], "remaining_gaps": ["Formal third-party security review evidence is not configured."]}):
+                                        with patch.object(portal, "handoff_readiness", return_value={"commercial_grade": "local_operator_pilot_ready", "tracks": [], "next_required_actions": ["Set DRAFTPAPER_HOSTED_READINESS_FILE."]}):
+                                            pack = portal.build_commercial_evidence_pack_from_console(
+                                                target_track="hosted_saas",
+                                                context=portal._local_admin_context(),
+                                            )
+
+            json_path = Path(pack["json_path"])
+            markdown_path = Path(pack["markdown_path"])
+            evidence = {item["id"]: item for item in pack["evidence"]}
+
+            self.assertEqual(pack["schema_version"], "draftpaper.commercial-evidence-pack/v1")
+            self.assertEqual(pack["status"], "attention")
+            self.assertIn("commercial_approval", pack["blocking_evidence_ids"])
+            self.assertIn("security_review", pack["blocking_evidence_ids"])
+            self.assertIn("hosted_readiness", pack["blocking_evidence_ids"])
+            self.assertTrue(evidence["claim_confirmation"]["passed"])
+            self.assertFalse(evidence["commercial_approval"]["passed"])
+            self.assertTrue(evidence["hosted_readiness"]["required"])
+            self.assertTrue(json_path.exists())
+            self.assertTrue(markdown_path.exists())
+            self.assertEqual(json_path.stat().st_mode & 0o077, 0)
+            self.assertEqual(markdown_path.stat().st_mode & 0o077, 0)
+            self.assertEqual(json_path.parent.stat().st_mode & 0o077, 0)
+            self.assertIn("commercial_evidence_packs", str(json_path.parent))
+            self.assertIn("TODO", markdown_path.read_text(encoding="utf-8"))
+            self.assertIn("Set DRAFTPAPER_HOSTED_READINESS_FILE.", pack["next_actions"])
 
     def test_commercial_approval_summary_verifies_private_approval_record(self) -> None:
         portal = load_portal_module()

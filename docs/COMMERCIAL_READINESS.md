@@ -637,6 +637,30 @@ The Service Console also exposes `POST /api/support-bundle-file` and the
 `scripts/verify_support_bundle.py`, and can auto-fill the Launch Package support
 bundle path in the console.
 
+## Commercial Evidence Pack
+
+Before a paid handoff or hosted launch review, export the current external
+evidence status into a private operator pack:
+
+```bash
+curl -sS -X POST http://127.0.0.1:4888/api/commercial-evidence-pack \
+  -H 'Content-Type: application/json' \
+  -d '{"target_track": "paid_local_handoff", "output_dir": ""}'
+```
+
+The Service Console exposes the same flow through the `Evidence Pack` button.
+The route writes `commercial-evidence-pack.json` and
+`commercial-evidence-pack.md` under `runtime/commercial_evidence_packs/` by
+default with owner-only permissions. The pack consolidates claim confirmation,
+commercial approval, release trust, security review, hosted readiness, current
+commercial grade, readiness tracks, blocking evidence IDs, and next actions.
+
+The pack is intentionally fail-closed: draft, unconfigured, `attention`, or
+`not_ready` evidence remains blocking for `paid_local_handoff` and
+`hosted_saas`. It does not create legal approval, third-party security review,
+release trust, domain claim confirmation, SSO, payment collection, or hosted
+production readiness by itself.
+
 ## Security Preflight
 
 Run the local security audit before a paid pilot, customer demo, or package
