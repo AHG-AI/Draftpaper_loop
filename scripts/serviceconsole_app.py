@@ -1658,6 +1658,16 @@ def _commercial_operations_report_verifier_module() -> Any:
     return module
 
 
+def _commercial_evidence_pack_verifier_module() -> Any:
+    verifier_path = REPO_ROOT / "scripts" / "verify_commercial_evidence_pack.py"
+    spec = importlib.util.spec_from_file_location("draftpaper_verify_commercial_evidence_pack", verifier_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scripts/verify_commercial_evidence_pack.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _verified_release_installer_module() -> Any:
     installer_path = REPO_ROOT / "scripts" / "install_verified_release.py"
     spec = importlib.util.spec_from_file_location("draftpaper_install_verified_release", installer_path)
@@ -4132,6 +4142,7 @@ def _commercial_capability_checks() -> list[tuple[str, bool, str]]:
         ("commercial_acceptance_suite", (REPO_ROOT / "scripts" / "run_commercial_acceptance_suite.py").exists() and (REPO_ROOT / "scripts" / "verify_commercial_acceptance_suite.py").exists(), "The full release, handoff, dossier, launch, and operations acceptance chain can be run and independently verified as one private operator evidence suite."),
         ("commercial_acceptance_suite_console", True, "The full commercial acceptance suite can be run and reverified from the console."),
         ("commercial_evidence_pack_console", True, "Commercial external evidence status can be exported as a private JSON and Markdown pack from the console."),
+        ("commercial_evidence_pack_verification", (REPO_ROOT / "scripts" / "verify_commercial_evidence_pack.py").exists(), "Commercial evidence packs can be independently verified for digest, blocking evidence consistency, markdown pairing, permissions, and sensitive path exclusions."),
         ("verified_release_install", (REPO_ROOT / "scripts" / "install_verified_release.py").exists(), "Verified release packages can be extracted only after release and optional dossier verification."),
         ("installed_release_smoke", (REPO_ROOT / "scripts" / "smoke_installed_release.py").exists(), "Extracted customer installs can be smoke-tested without network calls or customer data imports."),
         ("verified_release_install_console", True, "Verified release installs and installed-release smoke tests can be run from the console."),
@@ -4268,6 +4279,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
         _security_check("commercial_acceptance_suite", bool(capability_map.get("commercial_acceptance_suite")), "error", "Commercial acceptance suite runner and verifier are available for one-command private delivery evidence.", "Restore scripts/run_commercial_acceptance_suite.py and scripts/verify_commercial_acceptance_suite.py."),
         _security_check("commercial_acceptance_suite_console", bool(capability_map.get("commercial_acceptance_suite_console")), "error", "Commercial acceptance suite can be run from the console.", "Restore /api/commercial-acceptance-suite."),
         _security_check("commercial_evidence_pack_console", bool(capability_map.get("commercial_evidence_pack_console")), "error", "Commercial evidence status can be exported from the console.", "Restore /api/commercial-evidence-pack."),
+        _security_check("commercial_evidence_pack_verification", bool(capability_map.get("commercial_evidence_pack_verification")), "error", "Commercial evidence packs can be independently verified.", "Restore scripts/verify_commercial_evidence_pack.py."),
         _security_check("verified_release_install", bool(capability_map.get("verified_release_install")), "error", "Verified release install helper is available.", "Restore scripts/install_verified_release.py."),
         _security_check("installed_release_smoke", bool(capability_map.get("installed_release_smoke")), "error", "Installed release smoke tester is available.", "Restore scripts/smoke_installed_release.py."),
         _security_check("verified_release_install_console", bool(capability_map.get("verified_release_install_console")), "error", "Verified release install and installed smoke can be run from the console.", "Restore /api/verified-release-install."),
@@ -4298,6 +4310,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
         _security_check("commercial_operations_report_console", bool(capability_map.get("commercial_operations_report_console")), "error", "Commercial operations report can be built from the console.", "Restore /api/commercial-operations-report."),
         _security_check("commercial_acceptance_suite", bool(capability_map.get("commercial_acceptance_suite")), "error", "Commercial acceptance suite runner and verifier are available for one-command private delivery evidence.", "Restore scripts/run_commercial_acceptance_suite.py and scripts/verify_commercial_acceptance_suite.py."),
         _security_check("commercial_evidence_pack_console", bool(capability_map.get("commercial_evidence_pack_console")), "error", "Commercial evidence status can be exported from the console.", "Restore /api/commercial-evidence-pack."),
+        _security_check("commercial_evidence_pack_verification", bool(capability_map.get("commercial_evidence_pack_verification")), "error", "Commercial evidence packs can be independently verified before paid handoff review.", "Restore scripts/verify_commercial_evidence_pack.py."),
         _security_check("verified_release_install", bool(capability_map.get("verified_release_install")), "error", "Verified release install helper is available.", "Restore scripts/install_verified_release.py."),
         _security_check("installed_release_smoke", bool(capability_map.get("installed_release_smoke")), "error", "Installed release smoke tester is available.", "Restore scripts/smoke_installed_release.py."),
         _security_check("verified_release_install_console", bool(capability_map.get("verified_release_install_console")), "error", "Verified release install and installed smoke can be run from the console.", "Restore /api/verified-release-install."),
@@ -4583,10 +4596,17 @@ def build_commercial_evidence_pack_from_console(
             "The pack does not substitute for external legal, release trust, security, hosted, payment, or domain-review evidence.",
         ],
     }
+    verifier = _commercial_evidence_pack_verifier_module()
+    pack["pack_sha256"] = verifier.commercial_evidence_pack_digest(pack)
     _write_json(json_path, pack)
     json_path.chmod(0o600)
     markdown_path.write_text(_commercial_evidence_markdown(pack), encoding="utf-8")
     markdown_path.chmod(0o600)
+    verification = verifier.verify_commercial_evidence_pack(
+        json_path,
+        markdown_path=markdown_path,
+        require_ready=target_track != "local_operator_pilot",
+    )
     append_audit(
         "commercial_evidence_pack_built",
         actor=str(context.get("id") or "unknown"),
@@ -4594,7 +4614,11 @@ def build_commercial_evidence_pack_from_console(
         target_track=target_track,
         output_dir=str(output_dir_path),
         blocking_evidence_ids=",".join(pack["blocking_evidence_ids"]),
+        verification_status=verification.get("status"),
     )
+    pack["verification_status"] = verification.get("status")
+    pack["verification_summary"] = verification.get("summary") if isinstance(verification.get("summary"), dict) else {}
+    pack["verification"] = verification
     return pack
 
 

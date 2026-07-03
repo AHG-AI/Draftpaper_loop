@@ -662,6 +662,28 @@ The route writes `commercial-evidence-pack.json` and
 default with owner-only permissions. The pack consolidates claim confirmation,
 commercial approval, release trust, security review, hosted readiness, current
 commercial grade, readiness tracks, blocking evidence IDs, and next actions.
+The JSON includes `pack_sha256`, and the console immediately reruns
+`scripts/verify_commercial_evidence_pack.py` so the response includes
+`verification_status`, `verification_summary`, and the full verification report.
+
+Independently reverify the pack before using it in a paid handoff or hosted
+launch review:
+
+```bash
+python scripts/verify_commercial_evidence_pack.py \
+  var/private/customer/commercial-evidence-pack.json
+```
+
+When exporting an intentionally incomplete review pack, use `--allow-attention`
+so the verifier still checks structure, digest, permissions, markdown pairing,
+blocking evidence consistency, and sensitive path exclusions without requiring
+every external evidence item to be ready:
+
+```bash
+python scripts/verify_commercial_evidence_pack.py \
+  var/private/customer/commercial-evidence-pack.json \
+  --allow-attention
+```
 
 The pack is intentionally fail-closed: draft, unconfigured, `attention`, or
 `not_ready` evidence remains blocking for `paid_local_handoff` and

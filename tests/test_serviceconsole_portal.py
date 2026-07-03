@@ -320,6 +320,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_evidence_pack_console", {item["id"] for item in readiness["checks"]})
+        self.assertIn("commercial_evidence_pack_verification", {item["id"] for item in readiness["checks"]})
         self.assertIn("verified_release_install_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("paid_handoff_config_generation", {item["id"] for item in readiness["checks"]})
         self.assertIn("sample_workflow_acceptance", {item["id"] for item in readiness["checks"]})
@@ -1553,6 +1554,8 @@ class ServiceConsolePortalTests(unittest.TestCase):
 
             self.assertEqual(pack["schema_version"], "draftpaper.commercial-evidence-pack/v1")
             self.assertEqual(pack["status"], "attention")
+            self.assertTrue(pack["pack_sha256"])
+            self.assertEqual(pack["verification_status"], "attention")
             self.assertIn("commercial_approval", pack["blocking_evidence_ids"])
             self.assertIn("security_review", pack["blocking_evidence_ids"])
             self.assertIn("hosted_readiness", pack["blocking_evidence_ids"])
@@ -1567,6 +1570,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertIn("commercial_evidence_packs", str(json_path.parent))
             self.assertIn("TODO", markdown_path.read_text(encoding="utf-8"))
             self.assertIn("Set DRAFTPAPER_HOSTED_READINESS_FILE.", pack["next_actions"])
+            self.assertEqual(pack["verification"]["target_track"], "hosted_saas")
 
     def test_commercial_approval_summary_verifies_private_approval_record(self) -> None:
         portal = load_portal_module()
