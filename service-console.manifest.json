@@ -72,6 +72,12 @@
       "environment": "local-mac"
     },
     {
+      "id": "hosted-readiness-finalize",
+      "label": "Hosted Readiness Finalize API",
+      "url": "http://127.0.0.1:4888/api/hosted-readiness-finalize",
+      "environment": "local-mac"
+    },
+    {
       "id": "access-policy",
       "label": "Access Policy API",
       "url": "http://127.0.0.1:4888/api/access-policy",

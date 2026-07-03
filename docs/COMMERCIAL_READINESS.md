@@ -1510,6 +1510,17 @@ operator token from the authenticated request. The route never marks hosted SaaS
 ready by itself; the controls template must still be completed with external
 operator evidence and pass `prepare_hosted_readiness.py --require-ready`.
 
+After the controls file is completed, the Service Console can finish the same
+evidence assembly through `POST /api/hosted-readiness-finalize` or the
+`Hosted Final` button. Provide the collection report path, completed controls
+file path, and optionally an output path. The route calls the same fail-closed
+preparation helper used by the CLI, writes `hosted-readiness.json` plus a
+private preparation report under the runtime root when no explicit output path
+is supplied, and can activate the ready evidence file for the current console
+process. That activation is only process-local; durable hosted operation still
+requires configuring `DRAFTPAPER_HOSTED_READINESS_FILE` in the deployed service
+environment.
+
 Do not treat a successful collection or preparation report as hosted SaaS
 readiness by itself. The prepared `hosted-readiness.json` must still pass
 `validate_hosted_readiness.py`, the hosted readiness dossier verifier, and hosted

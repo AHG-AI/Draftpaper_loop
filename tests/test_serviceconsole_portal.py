@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import time
 import tempfile
@@ -138,6 +139,10 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("releaseZipPath", html)
         self.assertIn("hostedBaseUrl", html)
         self.assertIn("hostedDraftBtn", html)
+        self.assertIn("hostedFinalizeBtn", html)
+        self.assertIn("hostedCollectionReportPath", html)
+        self.assertIn("hostedControlsPath", html)
+        self.assertIn("hostedOutputPath", html)
         self.assertIn("readinessSummary", html)
         self.assertIn("refreshReadiness", html)
         self.assertIn("Hosted gaps", html)
@@ -146,6 +151,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/commercial-readiness", html)
         self.assertIn("/api/handoff-readiness", html)
         self.assertIn("/api/hosted-readiness-draft", html)
+        self.assertIn("/api/hosted-readiness-finalize", html)
         self.assertNotIn("prompt(", html)
 
     def test_project_summary_reports_next_action(self) -> None:
@@ -220,6 +226,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("hosted_evidence_collection", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_evidence_collection_verification", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_readiness_preparation", {item["id"] for item in readiness["checks"]})
+        self.assertIn("hosted_readiness_finalization", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_production_acceptance", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_approval_preparation", {item["id"] for item in readiness["checks"]})
         self.assertIn("claim_confirmation_preparation", {item["id"] for item in readiness["checks"]})
@@ -370,6 +377,66 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertEqual(collection_report.stat().st_mode & 0o077, 0)
             self.assertEqual(hosted_draft.stat().st_mode & 0o077, 0)
             self.assertEqual(controls_template.stat().st_mode & 0o077, 0)
+
+    def test_finalize_hosted_readiness_writes_private_runtime_material(self) -> None:
+        portal = load_portal_module()
+
+        def fake_prepare_hosted_readiness(
+            *,
+            collection_report,
+            controls_file,
+            output_file,
+            report_output,
+            force=False,
+            write_attention_candidate=False,
+        ):
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+            report_output.parent.mkdir(parents=True, exist_ok=True)
+            output_file.write_text(json.dumps({"schema_version": "draftpaper.hosted-readiness/v1", "status": "ready"}), encoding="utf-8")
+            report_output.write_text(json.dumps({"schema_version": "draftpaper.hosted-readiness-preparation/v1", "status": "ready"}), encoding="utf-8")
+            output_file.chmod(0o600)
+            report_output.chmod(0o600)
+            return {
+                "schema_version": "draftpaper.hosted-readiness-preparation/v1",
+                "status": "ready",
+                "collection_report": str(collection_report),
+                "controls_file": str(controls_file),
+                "output_file": str(output_file),
+                "validation": {"status": "ready", "summary": {"errors": 0}},
+                "summary": {"checks": 6, "errors": 0, "warnings": 0},
+            }
+
+        preparer = type("FakePreparer", (), {"prepare_hosted_readiness": staticmethod(fake_prepare_hosted_readiness)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            collection_report = root / "hosted-readiness-evidence-collection.json"
+            controls_file = root / "hosted-readiness-controls.json"
+            collection_report.write_text(json.dumps({"status": "verified"}), encoding="utf-8")
+            controls_file.write_text(json.dumps({"status": "verified"}), encoding="utf-8")
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_hosted_readiness_preparer_module", return_value=preparer):
+                    with patch.dict(os.environ, {"DRAFTPAPER_HOSTED_READINESS_FILE": ""}):
+                        report = portal.finalize_hosted_readiness(
+                            collection_report=collection_report,
+                            controls_file=controls_file,
+                            activate=True,
+                            context=portal._local_admin_context(),
+                        )
+                        activated_path = os.environ.get("DRAFTPAPER_HOSTED_READINESS_FILE")
+
+            output_file = Path(report["output_file"])
+            report_output = Path(report["report_output"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.hosted-readiness-finalization/v1")
+            self.assertEqual(report["status"], "ready")
+            self.assertTrue(report["activated_in_process"])
+            self.assertEqual(activated_path, str(output_file.resolve()))
+            self.assertIn("hosted_readiness_final", str(output_file.parent))
+            self.assertEqual(output_file.stat().st_mode & 0o077, 0)
+            self.assertEqual(report_output.stat().st_mode & 0o077, 0)
 
     def test_handoff_readiness_accepts_configured_paid_local_customer_handoff(self) -> None:
         portal = load_portal_module()

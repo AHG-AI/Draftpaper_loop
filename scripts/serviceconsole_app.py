@@ -1639,6 +1639,71 @@ def prepare_hosted_readiness_draft(
     }
 
 
+def finalize_hosted_readiness(
+    *,
+    collection_report: str | Path,
+    controls_file: str | Path,
+    output_file: str | Path | None = None,
+    report_output: str | Path | None = None,
+    activate: bool = False,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = context or _local_admin_context()
+    _require_role(context, {"admin"})
+    collection_path = Path(str(collection_report or "")).expanduser().resolve()
+    controls_path = Path(str(controls_file or "")).expanduser().resolve()
+    if not str(collection_report or "").strip():
+        raise ValueError("collection_report is required")
+    if not str(controls_file or "").strip():
+        raise ValueError("controls_file is required")
+
+    generated_at = _utc_timestamp()
+    final_root = RUNTIME_ROOT / "hosted_readiness_final" / _safe_slug(f"{collection_path.stem}-{generated_at}")
+    output_path = Path(str(output_file)).expanduser().resolve() if output_file else final_root / "hosted-readiness.json"
+    report_path = Path(str(report_output)).expanduser().resolve() if report_output else final_root / "hosted-readiness-preparation.json"
+    preparer = _hosted_readiness_preparer_module()
+    preparation = preparer.prepare_hosted_readiness(
+        collection_report=collection_path,
+        controls_file=controls_path,
+        output_file=output_path,
+        report_output=report_path,
+        force=True,
+    )
+    status = "ready" if preparation.get("status") == "ready" else "attention"
+    activated = False
+    prepared_output = Path(str(preparation.get("output_file") or output_path)).expanduser().resolve()
+    if activate and status == "ready" and prepared_output.exists():
+        os.environ["DRAFTPAPER_HOSTED_READINESS_FILE"] = str(prepared_output)
+        activated = True
+    append_audit(
+        "hosted_readiness_finalized",
+        actor=str(context.get("id") or "unknown"),
+        status=status,
+        collection_report=str(collection_path),
+        controls_file=str(controls_path),
+        output_file=str(prepared_output) if prepared_output.exists() else "",
+        activated_in_process=activated,
+    )
+    return {
+        "schema_version": "draftpaper.hosted-readiness-finalization/v1",
+        "status": status,
+        "generated_at": generated_at,
+        "collection_report": str(collection_path),
+        "controls_file": str(controls_path),
+        "output_file": str(prepared_output) if prepared_output.exists() else str(output_path),
+        "report_output": str(report_path),
+        "activated_in_process": activated,
+        "preparation_status": preparation.get("status"),
+        "preparation_summary": preparation.get("summary") if isinstance(preparation.get("summary"), dict) else {},
+        "validation": preparation.get("validation") if isinstance(preparation.get("validation"), dict) else {},
+        "preparation": preparation,
+        "notes": [
+            "This finalizes hosted SaaS readiness evidence from a verified collection report and completed operator controls.",
+            "Activation only affects the current console process; configure DRAFTPAPER_HOSTED_READINESS_FILE in the deployed service environment for durable hosted SaaS readiness.",
+        ],
+    }
+
+
 def prepare_security_review_draft(*, context: dict[str, Any] | None = None) -> dict[str, Any]:
     context = context or _local_admin_context()
     _require_role(context, {"admin"})
@@ -3218,6 +3283,7 @@ def _commercial_capability_checks() -> list[tuple[str, bool, str]]:
         ("hosted_evidence_collection", (REPO_ROOT / "scripts" / "collect_hosted_readiness_evidence.py").exists(), "Hosted readiness evidence can be collected from a real hosted URL into a private hashed evidence draft before SaaS acceptance."),
         ("hosted_evidence_collection_verification", (REPO_ROOT / "scripts" / "verify_hosted_evidence_collection.py").exists(), "Hosted evidence collection reports can be independently verified for artifact hashes, draft boundaries, and redaction before SaaS acceptance."),
         ("hosted_readiness_preparation", (REPO_ROOT / "scripts" / "prepare_hosted_readiness.py").exists(), "Verified hosted probes and operator external-control evidence can be assembled into hosted-readiness.json with hash checks before SaaS acceptance."),
+        ("hosted_readiness_finalization", True, "The console can finalize completed hosted controls into a private hosted-readiness.json and optionally activate it for the current process."),
         ("hosted_readiness_dossier", (REPO_ROOT / "scripts" / "build_hosted_readiness_dossier.py").exists() and (REPO_ROOT / "scripts" / "verify_hosted_readiness_dossier.py").exists(), "Hosted SaaS readiness evidence can be packaged and independently verified without embedding raw private readiness files."),
         ("hosted_production_acceptance", (REPO_ROOT / "scripts" / "run_hosted_production_acceptance.py").exists(), "Hosted production acceptance can probe the actual hosted URL and compare API readiness, private evidence, and hosted readiness dossier status."),
         ("production_deployment_artifacts", (REPO_ROOT / "scripts" / "verify_production_deployment_artifacts.py").exists() and (REPO_ROOT / "deploy" / "production" / "Dockerfile").exists(), "Production deployment artifacts for container and systemd hosted operation are present and independently verifiable."),
@@ -3342,6 +3408,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
         _security_check("hosted_evidence_collection", bool(capability_map.get("hosted_evidence_collection")), "error", "Hosted evidence collector is available for private hashed live URL evidence capture.", "Restore scripts/collect_hosted_readiness_evidence.py."),
         _security_check("hosted_evidence_collection_verification", bool(capability_map.get("hosted_evidence_collection_verification")), "error", "Hosted evidence collection verifier is available for independent artifact hash and redaction checks.", "Restore scripts/verify_hosted_evidence_collection.py."),
         _security_check("hosted_readiness_preparation", bool(capability_map.get("hosted_readiness_preparation")), "error", "Hosted readiness preparation helper is available to fail closed while assembling verified probes and operator evidence.", "Restore scripts/prepare_hosted_readiness.py."),
+        _security_check("hosted_readiness_finalization", bool(capability_map.get("hosted_readiness_finalization")), "error", "Hosted readiness finalization is available from the console after operator controls are completed.", "Restore the /api/hosted-readiness-finalize route."),
         _security_check("hosted_production_acceptance", bool(capability_map.get("hosted_production_acceptance")), "error", "Hosted production acceptance runner is available for external hosted URL verification.", "Restore scripts/run_hosted_production_acceptance.py."),
         _security_check("production_deployment_artifacts", bool(capability_map.get("production_deployment_artifacts")), "error", "Production deployment artifacts and verifier are available for container/systemd hosted operation.", "Restore deploy/production/* and scripts/verify_production_deployment_artifacts.py."),
     ]
@@ -3814,7 +3881,7 @@ button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 1
 @media(max-width:920px){{main{{grid-template-columns:1fr}} header{{align-items:flex-start;flex-direction:column}}}}
 </style></head>
 <body>
-<header><div><h1>Draftpaper Loop Console</h1><div class="muted">Local projects: {PROJECTS_ROOT}</div></div><div class="row"><div class="token-inline"><input id="tokenInput" type="password" autocomplete="off" placeholder="Operator token"><button id="saveTokenBtn">Save token</button><span id="tokenStatus" class="token-status muted"></span></div><button id="tokenBtn">Token</button><button id="refreshBtn">Refresh</button><button id="accessBtn">Access</button><button id="usageBtn">Usage</button><button id="quotaBtn">Quota</button><button id="billingBtn">Billing</button><button id="licenseBtn">License</button><button id="entitlementsBtn">Entitlements</button><button id="claimsBtn">Claims</button><button id="approvalBtn">Approval</button><button id="approvalDraftBtn">Approval Draft</button><button id="trustBtn">Trust</button><button id="trustDraftBtn">Trust Draft</button><button id="secReviewBtn">Sec Review</button><button id="secReviewDraftBtn">Sec Draft</button><button id="hostedDraftBtn">Hosted Draft</button><button id="backupsBtn">Backups</button><button id="rehearsalsBtn">Rehearsals</button><button id="auditBtn">Audit</button><button id="securityBtn">Security</button><button id="supportBtn">Support</button><button id="readinessBtn">Readiness</button><button id="handoffBtn">Handoff</button></div></header>
+<header><div><h1>Draftpaper Loop Console</h1><div class="muted">Local projects: {PROJECTS_ROOT}</div></div><div class="row"><div class="token-inline"><input id="tokenInput" type="password" autocomplete="off" placeholder="Operator token"><button id="saveTokenBtn">Save token</button><span id="tokenStatus" class="token-status muted"></span></div><button id="tokenBtn">Token</button><button id="refreshBtn">Refresh</button><button id="accessBtn">Access</button><button id="usageBtn">Usage</button><button id="quotaBtn">Quota</button><button id="billingBtn">Billing</button><button id="licenseBtn">License</button><button id="entitlementsBtn">Entitlements</button><button id="claimsBtn">Claims</button><button id="approvalBtn">Approval</button><button id="approvalDraftBtn">Approval Draft</button><button id="trustBtn">Trust</button><button id="trustDraftBtn">Trust Draft</button><button id="secReviewBtn">Sec Review</button><button id="secReviewDraftBtn">Sec Draft</button><button id="hostedDraftBtn">Hosted Draft</button><button id="hostedFinalizeBtn">Hosted Final</button><button id="backupsBtn">Backups</button><button id="rehearsalsBtn">Rehearsals</button><button id="auditBtn">Audit</button><button id="securityBtn">Security</button><button id="supportBtn">Support</button><button id="readinessBtn">Readiness</button><button id="handoffBtn">Handoff</button></div></header>
 <main>
 <div class="stack">
 <section><h2>Create project</h2><div class="stack"><label>Idea<input id="idea" placeholder="Research idea"></label><label>Field<input id="field" placeholder="machine learning astronomy"></label><label>Target journal<input id="targetJournal" placeholder="General Academic Journal"></label><button class="primary" id="createBtn">Create</button></div></section>
@@ -3823,7 +3890,7 @@ button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 1
 <div class="stack">
 <section><div class="row" style="justify-content:space-between"><h2>Commercial readiness</h2><button id="refreshReadinessBtn">Refresh readiness</button></div><div id="readinessSummary" class="stack"><div class="muted">Loading readiness.</div></div></section>
 <section><h2>Selected project</h2><div id="selected" class="muted">No project selected.</div></section>
-<section><h2>Actions</h2><div class="row"><label style="flex:1">Action<select id="actionSelect"></select></label><label style="width:120px">Limit<input id="limit" type="number" min="1" max="50" value="12"></label></div><div class="grid" style="margin-top:8px"><label>Query<input id="query"></label><label>JSON path<input id="fromJson"></label><label>HTML template path<input id="fromHtml"></label><label>Method note<input id="methodNote"></label><label>Release zip path<input id="releaseZipPath" placeholder="/path/to/release.zip"></label><label>Hosted base URL<input id="hostedBaseUrl" placeholder="https://draftpaper.example.com"></label></div><div class="row" style="margin-top:10px"><button class="primary" id="runBtn">Run action</button><button id="statusBtn">Status</button><button id="syncBtn">Sync stale</button></div></section>
+<section><h2>Actions</h2><div class="row"><label style="flex:1">Action<select id="actionSelect"></select></label><label style="width:120px">Limit<input id="limit" type="number" min="1" max="50" value="12"></label></div><div class="grid" style="margin-top:8px"><label>Query<input id="query"></label><label>JSON path<input id="fromJson"></label><label>HTML template path<input id="fromHtml"></label><label>Method note<input id="methodNote"></label><label>Release zip path<input id="releaseZipPath" placeholder="/path/to/release.zip"></label><label>Hosted base URL<input id="hostedBaseUrl" placeholder="https://draftpaper.example.com"></label><label>Hosted collection report<input id="hostedCollectionReportPath" placeholder="/path/to/hosted-readiness-evidence-collection.json"></label><label>Hosted controls file<input id="hostedControlsPath" placeholder="/path/to/hosted-readiness-controls.json"></label><label>Hosted output file<input id="hostedOutputPath" placeholder="/path/to/hosted-readiness.json"></label></div><div class="row" style="margin-top:10px"><button class="primary" id="runBtn">Run action</button><button id="statusBtn">Status</button><button id="syncBtn">Sync stale</button></div></section>
 <section><div class="row" style="justify-content:space-between"><h2>Jobs</h2><button id="cleanupJobsBtn">Cleanup</button></div><div id="jobs"></div></section>
 <section><h2>Output</h2><pre id="output">Ready.</pre></section>
 </div>
@@ -3855,8 +3922,9 @@ async function backupSelected(includeData){{if(!selected)return; const p=await a
 async function prepareClaimDraft(){{if(!selected)return; const p=await api('/api/project-claim-confirmation-draft',{{method:'POST',body:JSON.stringify({{project:selected.slug}})}});show(p);await refreshReadiness()}}
 async function prepareTrustDraft(){{const releaseZip=releaseZipPath.value.trim(); const p=await api('/api/release-trust-draft',{{method:'POST',body:JSON.stringify({{release_zip:releaseZip}})}});show(p);await refreshReadiness()}}
 async function prepareHostedDraft(){{const baseUrl=hostedBaseUrl.value.trim(); const p=await api('/api/hosted-readiness-draft',{{method:'POST',body:JSON.stringify({{base_url:baseUrl}})}});show(p);await refreshReadiness()}}
+async function finalizeHostedReadiness(){{const payload={{collection_report:hostedCollectionReportPath.value.trim(),controls_file:hostedControlsPath.value.trim(),output_file:hostedOutputPath.value.trim(),activate:true}}; const p=await api('/api/hosted-readiness-finalize',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
 tokenBtn.onclick=()=>tokenInput.focus(); saveTokenBtn.onclick=async()=>{{const token=tokenInput.value.trim(); if(token){{localStorage.setItem('draftpaperConsoleToken',token); setTokenStatus('Token saved','ok')}}else{{localStorage.removeItem('draftpaperConsoleToken'); setTokenStatus('Token cleared','')}} await refresh().catch(show)}};
-refreshBtn.onclick=refresh; refreshReadinessBtn.onclick=refreshReadiness; accessBtn.onclick=async()=>show(await api('/api/access-policy')); usageBtn.onclick=async()=>show(await api('/api/usage')); quotaBtn.onclick=async()=>show(await api('/api/quota')); billingBtn.onclick=async()=>show(await api('/api/billing')); licenseBtn.onclick=async()=>show(await api('/api/license')); entitlementsBtn.onclick=async()=>show(await api('/api/license-entitlements')); claimsBtn.onclick=async()=>show(await api('/api/claim-confirmation')); approvalBtn.onclick=async()=>show(await api('/api/license-approval')); approvalDraftBtn.onclick=async()=>{{show(await api('/api/commercial-approval-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; trustBtn.onclick=async()=>show(await api('/api/release-trust')); trustDraftBtn.onclick=prepareTrustDraft; secReviewBtn.onclick=async()=>show(await api('/api/security-review')); secReviewDraftBtn.onclick=async()=>{{show(await api('/api/security-review-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; hostedDraftBtn.onclick=prepareHostedDraft; backupsBtn.onclick=async()=>show(await api('/api/backups')); rehearsalsBtn.onclick=async()=>show(await api('/api/backups/rehearsals')); auditBtn.onclick=async()=>show(await api('/api/audit?limit=50')); securityBtn.onclick=async()=>show(await api('/api/security-audit')); supportBtn.onclick=downloadSupportBundle; readinessBtn.onclick=async()=>show(await api('/api/commercial-readiness')); handoffBtn.onclick=async()=>show(await api('/api/handoff-readiness')); cleanupJobsBtn.onclick=async()=>{{show(await api('/api/jobs/cleanup',{{method:'POST',body:JSON.stringify({{keep:20}})}}));await refreshJobs()}}; createBtn.onclick=async()=>{{const p=await api('/api/jobs',{{method:'POST',body:JSON.stringify({{action:'create-project',idea:idea.value,field:field.value,target_journal:targetJournal.value||'General Academic Journal'}})}});show(p);await refreshJobs();await refreshReadiness()}}; runBtn.onclick=async()=>start(sel.value); statusBtn.onclick=async()=>start('status'); syncBtn.onclick=async()=>start('sync-artifact-stale'); setInterval(refreshJobs,2500); refresh().catch(show);
+refreshBtn.onclick=refresh; refreshReadinessBtn.onclick=refreshReadiness; accessBtn.onclick=async()=>show(await api('/api/access-policy')); usageBtn.onclick=async()=>show(await api('/api/usage')); quotaBtn.onclick=async()=>show(await api('/api/quota')); billingBtn.onclick=async()=>show(await api('/api/billing')); licenseBtn.onclick=async()=>show(await api('/api/license')); entitlementsBtn.onclick=async()=>show(await api('/api/license-entitlements')); claimsBtn.onclick=async()=>show(await api('/api/claim-confirmation')); approvalBtn.onclick=async()=>show(await api('/api/license-approval')); approvalDraftBtn.onclick=async()=>{{show(await api('/api/commercial-approval-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; trustBtn.onclick=async()=>show(await api('/api/release-trust')); trustDraftBtn.onclick=prepareTrustDraft; secReviewBtn.onclick=async()=>show(await api('/api/security-review')); secReviewDraftBtn.onclick=async()=>{{show(await api('/api/security-review-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; hostedDraftBtn.onclick=prepareHostedDraft; hostedFinalizeBtn.onclick=finalizeHostedReadiness; backupsBtn.onclick=async()=>show(await api('/api/backups')); rehearsalsBtn.onclick=async()=>show(await api('/api/backups/rehearsals')); auditBtn.onclick=async()=>show(await api('/api/audit?limit=50')); securityBtn.onclick=async()=>show(await api('/api/security-audit')); supportBtn.onclick=downloadSupportBundle; readinessBtn.onclick=async()=>show(await api('/api/commercial-readiness')); handoffBtn.onclick=async()=>show(await api('/api/handoff-readiness')); cleanupJobsBtn.onclick=async()=>{{show(await api('/api/jobs/cleanup',{{method:'POST',body:JSON.stringify({{keep:20}})}}));await refreshJobs()}}; createBtn.onclick=async()=>{{const p=await api('/api/jobs',{{method:'POST',body:JSON.stringify({{action:'create-project',idea:idea.value,field:field.value,target_journal:targetJournal.value||'General Academic Journal'}})}});show(p);await refreshJobs();await refreshReadiness()}}; runBtn.onclick=async()=>start(sel.value); statusBtn.onclick=async()=>start('status'); syncBtn.onclick=async()=>start('sync-artifact-stale'); setInterval(refreshJobs,2500); refresh().catch(show);
 </script></body></html>"""
 
 
@@ -4042,6 +4110,19 @@ class Handler(BaseHTTPRequestHandler):
                         token=_request_token(self),
                         environment=str(payload.get("environment") or "local-rehearsal"),
                         timeout=float(payload.get("timeout") or 3.0),
+                        context=context,
+                    ),
+                    HTTPStatus.CREATED,
+                )
+            elif parsed.path == "/api/hosted-readiness-finalize":
+                _json(
+                    self,
+                    finalize_hosted_readiness(
+                        collection_report=str(payload.get("collection_report") or ""),
+                        controls_file=str(payload.get("controls_file") or ""),
+                        output_file=str(payload.get("output_file") or "") or None,
+                        report_output=str(payload.get("report_output") or "") or None,
+                        activate=bool(payload.get("activate")),
                         context=context,
                     ),
                     HTTPStatus.CREATED,
