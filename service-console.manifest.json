@@ -126,6 +126,12 @@
       "environment": "local-mac"
     },
     {
+      "id": "commercial-acceptance-suite",
+      "label": "Commercial Acceptance Suite API",
+      "url": "http://127.0.0.1:4888/api/commercial-acceptance-suite",
+      "environment": "local-mac"
+    },
+    {
       "id": "claim-confirmation",
       "label": "Claim Confirmation Evidence API",
       "url": "http://127.0.0.1:4888/api/claim-confirmation",

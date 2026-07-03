@@ -1060,6 +1060,15 @@ acceptance, customer dossier build and verification, launch package build and
 verification, operations report build, and operations report verification in one
 private evidence directory:
 
+The Service Console exposes this as `POST /api/commercial-acceptance-suite` and
+the `Suite` button. It requires a signing key path, customer details, target
+track, and output directory or uses a private runtime directory by default. The
+route runs the suite and then calls `verify_commercial_acceptance_suite.py` on
+the generated top-level report, so the console response includes both suite
+status and independent verification status. The request token is used only for
+probing the local console and downloading the support bundle; it is not written
+to the suite report.
+
 ```bash
 TOKEN="$(cat var/private/handoff-CUST-A/operator-token.txt)"
 

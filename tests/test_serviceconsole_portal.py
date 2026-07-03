@@ -139,11 +139,17 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("releaseZipPath", html)
         self.assertIn("hostedBaseUrl", html)
         self.assertIn("paidConfigBtn", html)
+        self.assertIn("suiteBtn", html)
         self.assertIn("handoffCustomerId", html)
         self.assertIn("handoffCustomerName", html)
         self.assertIn("handoffOutputDir", html)
         self.assertIn("handoffExpiresAt", html)
         self.assertIn("handoffActivate", html)
+        self.assertIn("suiteOutputDir", html)
+        self.assertIn("suiteTargetTrack", html)
+        self.assertIn("suiteVersionLabel", html)
+        self.assertIn("suitePublicKey", html)
+        self.assertIn("suiteTimeout", html)
         self.assertIn("hostedDraftBtn", html)
         self.assertIn("hostedFinalizeBtn", html)
         self.assertIn("hostedDossierBtn", html)
@@ -162,6 +168,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/commercial-readiness", html)
         self.assertIn("/api/handoff-readiness", html)
         self.assertIn("/api/paid-handoff-config", html)
+        self.assertIn("/api/commercial-acceptance-suite", html)
         self.assertIn("/api/hosted-readiness-draft", html)
         self.assertIn("/api/hosted-readiness-finalize", html)
         self.assertIn("/api/hosted-readiness-dossier", html)
@@ -236,6 +243,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("commercial_launch_package", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_operations_report", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
+        self.assertIn("commercial_acceptance_suite_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("paid_handoff_config_generation", {item["id"] for item in readiness["checks"]})
         self.assertIn("sample_workflow_acceptance", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_evidence_collection", {item["id"] for item in readiness["checks"]})
@@ -340,6 +348,64 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertEqual(active_pin, "d" * 64)
             self.assertIn("paid_handoff_configs", str(Path(report["output_dir"])))
             self.assertEqual(Path(files["token"]).stat().st_mode & 0o077, 0)
+
+    def test_run_commercial_acceptance_suite_from_console_reverifies_report(self) -> None:
+        portal = load_portal_module()
+        captured: dict[str, object] = {}
+
+        def fake_run_commercial_acceptance_suite(**kwargs):
+            captured.update(kwargs)
+            output_dir = Path(kwargs["output_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.chmod(0o700)
+            suite_path = output_dir / "commercial-acceptance-suite.json"
+            suite_path.write_text(json.dumps({"schema_version": "draftpaper.commercial-acceptance-suite/v1", "status": "passed"}), encoding="utf-8")
+            suite_path.chmod(0o600)
+            return {
+                "schema_version": "draftpaper.commercial-acceptance-suite/v1",
+                "status": "passed",
+                "summary": {"steps": 9, "passed": 9, "errors": 0, "warnings": 0},
+                "suite_sha256": "e" * 64,
+                "output_dir": str(output_dir),
+            }
+
+        def fake_verify_commercial_acceptance_suite(path):
+            return {"status": "verified", "suite_path": str(path), "summary": {"checks": 10, "errors": 0, "warnings": 0}}
+
+        suite = type("FakeCommercialSuite", (), {"run_commercial_acceptance_suite": staticmethod(fake_run_commercial_acceptance_suite)})
+        verifier = type("FakeCommercialSuiteVerifier", (), {"verify_commercial_acceptance_suite": staticmethod(fake_verify_commercial_acceptance_suite)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            signing_key = root / "signing.pem"
+            signing_key.write_text("private key placeholder\n", encoding="utf-8")
+            signing_key.chmod(0o600)
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_commercial_acceptance_suite_module", return_value=suite):
+                    with patch.object(portal, "_commercial_acceptance_suite_verifier_module", return_value=verifier):
+                        report = portal.run_commercial_acceptance_suite_from_console(
+                            customer_id="CUST-A",
+                            customer_name="Customer A",
+                            signing_key=str(signing_key),
+                            base_url="http://127.0.0.1:4888",
+                            token="operator-token",
+                            context=portal._local_admin_context(),
+                        )
+
+            suite_path = Path(report["suite_path"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.commercial-acceptance-suite-run/v1")
+            self.assertEqual(report["status"], "verified")
+            self.assertEqual(report["suite_status"], "passed")
+            self.assertEqual(report["verification_status"], "verified")
+            self.assertEqual(captured["token"], "operator-token")
+            self.assertEqual(captured["customer_id"], "CUST-A")
+            self.assertEqual(captured["target_track"], "paid_local_handoff")
+            self.assertTrue(suite_path.exists())
+            self.assertEqual(suite_path.stat().st_mode & 0o077, 0)
+            self.assertIn("commercial_acceptance_suites", str(Path(report["output_dir"])))
 
     def test_handoff_readiness_blocks_paid_handoff_without_license_or_auth(self) -> None:
         portal = load_portal_module()
