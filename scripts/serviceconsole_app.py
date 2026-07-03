@@ -1588,6 +1588,26 @@ def _commercial_acceptance_suite_verifier_module() -> Any:
     return module
 
 
+def _commercial_operations_report_builder_module() -> Any:
+    builder_path = REPO_ROOT / "scripts" / "build_commercial_operations_report.py"
+    spec = importlib.util.spec_from_file_location("draftpaper_build_commercial_operations_report", builder_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scripts/build_commercial_operations_report.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _commercial_operations_report_verifier_module() -> Any:
+    verifier_path = REPO_ROOT / "scripts" / "verify_commercial_operations_report.py"
+    spec = importlib.util.spec_from_file_location("draftpaper_verify_commercial_operations_report", verifier_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scripts/verify_commercial_operations_report.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _hosted_evidence_collector_module() -> Any:
     collector_path = REPO_ROOT / "scripts" / "collect_hosted_readiness_evidence.py"
     spec = importlib.util.spec_from_file_location("draftpaper_collect_hosted_readiness_evidence", collector_path)
@@ -2115,6 +2135,90 @@ def run_commercial_acceptance_suite_from_console(
             "This runs the full commercial acceptance suite and independently reverifies the generated suite artifacts.",
             "A signing key is required so release and launch evidence cannot be mistaken for an unsigned commercial handoff.",
             "The response and suite report do not include console tokens.",
+        ],
+    }
+
+
+def build_commercial_operations_report_from_console(
+    *,
+    customer_id: str = "",
+    customer_name: str = "",
+    output_file: str = "",
+    markdown_output: str = "",
+    base_url: str = "",
+    token: str = "",
+    target_track: str = "paid_local_handoff",
+    launch_package: str = "",
+    require_launch_package: bool = False,
+    require_ready: bool = True,
+    timeout: float = 5.0,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = context or _local_admin_context()
+    _require_role(context, {"admin"})
+    target_track = target_track.strip() or "paid_local_handoff"
+    generated_at = _utc_timestamp()
+    customer_slug = _safe_slug(customer_id or customer_name or "customer")
+    report_root = RUNTIME_ROOT / "commercial_operations_reports" / _safe_slug(f"{customer_slug}-{target_track}-{generated_at}")
+    output_path = Path(output_file).expanduser().resolve() if output_file.strip() else report_root / "commercial-operations-report.json"
+    markdown_path = Path(markdown_output).expanduser().resolve() if markdown_output.strip() else report_root / "commercial-operations-report.md"
+    launch_path = Path(launch_package).expanduser().resolve() if launch_package.strip() else None
+    base = base_url.strip() or f"http://{_runtime_host()}:{_runtime_port()}"
+
+    builder = _commercial_operations_report_builder_module()
+    report = builder.build_commercial_operations_report(
+        base_url=base,
+        token=token,
+        target_track=target_track,
+        launch_package=launch_path,
+        require_launch_package=require_launch_package,
+        customer_id=customer_id.strip(),
+        customer_name=customer_name.strip(),
+        output=output_path,
+        markdown_output=markdown_path,
+        timeout=float(timeout),
+    )
+
+    verification: dict[str, Any] = {}
+    if output_path.exists():
+        verifier = _commercial_operations_report_verifier_module()
+        verification = verifier.verify_commercial_operations_report(
+            output_path,
+            launch_package=launch_path,
+            require_ready=require_ready,
+        )
+    status = "verified" if report.get("status") == "ready" and verification.get("status") == "verified" else "attention"
+    append_audit(
+        "commercial_operations_report_built",
+        actor=str(context.get("id") or "unknown"),
+        status=status,
+        target_track=target_track,
+        customer_id=customer_id.strip(),
+        output_file=str(output_path),
+        report_status=report.get("status"),
+        verification_status=verification.get("status"),
+    )
+    return {
+        "schema_version": "draftpaper.commercial-operations-report-build/v1",
+        "status": status,
+        "generated_at": generated_at,
+        "base_url": base.rstrip("/"),
+        "target_track": target_track,
+        "customer_id": customer_id.strip(),
+        "customer_name": customer_name.strip(),
+        "output_file": str(output_path),
+        "markdown_output": str(markdown_path),
+        "launch_package": str(launch_path) if launch_path is not None else "",
+        "report_status": report.get("status"),
+        "report_summary": report.get("summary") if isinstance(report.get("summary"), dict) else {},
+        "verification_status": verification.get("status"),
+        "verification_summary": verification.get("summary") if isinstance(verification.get("summary"), dict) else {},
+        "report": report,
+        "verification": verification,
+        "notes": [
+            "This builds a customer-safe commercial operations report and independently reverifies the generated report.",
+            "The request token is used only for local console probes and is not written to the operations report.",
+            "Default outputs are owner-only runtime evidence files under the private console runtime root.",
         ],
     }
 
@@ -3667,6 +3771,7 @@ def _commercial_capability_checks() -> list[tuple[str, bool, str]]:
         ("handoff_dossier_verification", (REPO_ROOT / "scripts" / "verify_handoff_dossier.py").exists(), "Customer handoff dossiers can be independently verified for digest, sidecar, release, and private-file checks."),
         ("commercial_launch_package", (REPO_ROOT / "scripts" / "build_commercial_launch_package.py").exists() and (REPO_ROOT / "scripts" / "verify_commercial_launch_package.py").exists(), "Commercial launch packages can bundle and independently reverify release, handoff, support, and hosted readiness evidence."),
         ("commercial_operations_report", (REPO_ROOT / "scripts" / "build_commercial_operations_report.py").exists() and (REPO_ROOT / "scripts" / "verify_commercial_operations_report.py").exists(), "Commercial operations reports can summarize and verify customer-safe post-handoff health, billing, quota, backup, license, and launch-package evidence."),
+        ("commercial_operations_report_console", True, "Commercial operations reports can be built and reverified from the console."),
         ("commercial_acceptance_suite", (REPO_ROOT / "scripts" / "run_commercial_acceptance_suite.py").exists() and (REPO_ROOT / "scripts" / "verify_commercial_acceptance_suite.py").exists(), "The full release, handoff, dossier, launch, and operations acceptance chain can be run and independently verified as one private operator evidence suite."),
         ("commercial_acceptance_suite_console", True, "The full commercial acceptance suite can be run and reverified from the console."),
         ("verified_release_install", (REPO_ROOT / "scripts" / "install_verified_release.py").exists(), "Verified release packages can be extracted only after release and optional dossier verification."),
@@ -3767,6 +3872,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
         _security_check("handoff_dossier_verification", bool(capability_map.get("handoff_dossier_verification")), "error", "Customer-facing handoff dossier verifier is available.", "Restore scripts/verify_handoff_dossier.py."),
         _security_check("commercial_launch_package", bool(capability_map.get("commercial_launch_package")), "error", "Commercial launch package builder and verifier are available.", "Restore scripts/build_commercial_launch_package.py and scripts/verify_commercial_launch_package.py."),
         _security_check("commercial_operations_report", bool(capability_map.get("commercial_operations_report")), "error", "Commercial operations report builder and verifier are available.", "Restore scripts/build_commercial_operations_report.py and scripts/verify_commercial_operations_report.py."),
+        _security_check("commercial_operations_report_console", bool(capability_map.get("commercial_operations_report_console")), "error", "Commercial operations report can be built from the console.", "Restore /api/commercial-operations-report."),
         _security_check("commercial_acceptance_suite", bool(capability_map.get("commercial_acceptance_suite")), "error", "Commercial acceptance suite runner and verifier are available for one-command private delivery evidence.", "Restore scripts/run_commercial_acceptance_suite.py and scripts/verify_commercial_acceptance_suite.py."),
         _security_check("commercial_acceptance_suite_console", bool(capability_map.get("commercial_acceptance_suite_console")), "error", "Commercial acceptance suite can be run from the console.", "Restore /api/commercial-acceptance-suite."),
         _security_check("verified_release_install", bool(capability_map.get("verified_release_install")), "error", "Verified release install helper is available.", "Restore scripts/install_verified_release.py."),
@@ -3791,6 +3897,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
         _security_check("handoff_dossier_verification", bool(capability_map.get("handoff_dossier_verification")), "error", "Customer-facing handoff dossier verifier is available.", "Restore scripts/verify_handoff_dossier.py."),
         _security_check("commercial_launch_package", bool(capability_map.get("commercial_launch_package")), "error", "Commercial launch package builder and verifier are available.", "Restore scripts/build_commercial_launch_package.py and scripts/verify_commercial_launch_package.py."),
         _security_check("commercial_operations_report", bool(capability_map.get("commercial_operations_report")), "error", "Commercial operations report builder and verifier are available.", "Restore scripts/build_commercial_operations_report.py and scripts/verify_commercial_operations_report.py."),
+        _security_check("commercial_operations_report_console", bool(capability_map.get("commercial_operations_report_console")), "error", "Commercial operations report can be built from the console.", "Restore /api/commercial-operations-report."),
         _security_check("commercial_acceptance_suite", bool(capability_map.get("commercial_acceptance_suite")), "error", "Commercial acceptance suite runner and verifier are available for one-command private delivery evidence.", "Restore scripts/run_commercial_acceptance_suite.py and scripts/verify_commercial_acceptance_suite.py."),
         _security_check("verified_release_install", bool(capability_map.get("verified_release_install")), "error", "Verified release install helper is available.", "Restore scripts/install_verified_release.py."),
         _security_check("installed_release_smoke", bool(capability_map.get("installed_release_smoke")), "error", "Installed release smoke tester is available.", "Restore scripts/smoke_installed_release.py."),
@@ -4274,7 +4381,7 @@ button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 1
 @media(max-width:920px){{main{{grid-template-columns:1fr}} header{{align-items:flex-start;flex-direction:column}}}}
 </style></head>
 <body>
-<header><div><h1>Draftpaper Loop Console</h1><div class="muted">Local projects: {PROJECTS_ROOT}</div></div><div class="row"><div class="token-inline"><input id="tokenInput" type="password" autocomplete="off" placeholder="Operator token"><button id="saveTokenBtn">Save token</button><span id="tokenStatus" class="token-status muted"></span></div><button id="tokenBtn">Token</button><button id="refreshBtn">Refresh</button><button id="accessBtn">Access</button><button id="usageBtn">Usage</button><button id="quotaBtn">Quota</button><button id="billingBtn">Billing</button><button id="licenseBtn">License</button><button id="entitlementsBtn">Entitlements</button><button id="paidConfigBtn">Paid Config</button><button id="suiteBtn">Suite</button><button id="claimsBtn">Claims</button><button id="approvalBtn">Approval</button><button id="approvalDraftBtn">Approval Draft</button><button id="trustBtn">Trust</button><button id="trustDraftBtn">Trust Draft</button><button id="secReviewBtn">Sec Review</button><button id="secReviewDraftBtn">Sec Draft</button><button id="hostedDraftBtn">Hosted Draft</button><button id="hostedFinalizeBtn">Hosted Final</button><button id="hostedDossierBtn">Hosted Dossier</button><button id="hostedAcceptBtn">Hosted Accept</button><button id="backupsBtn">Backups</button><button id="rehearsalsBtn">Rehearsals</button><button id="auditBtn">Audit</button><button id="securityBtn">Security</button><button id="supportBtn">Support</button><button id="readinessBtn">Readiness</button><button id="handoffBtn">Handoff</button></div></header>
+<header><div><h1>Draftpaper Loop Console</h1><div class="muted">Local projects: {PROJECTS_ROOT}</div></div><div class="row"><div class="token-inline"><input id="tokenInput" type="password" autocomplete="off" placeholder="Operator token"><button id="saveTokenBtn">Save token</button><span id="tokenStatus" class="token-status muted"></span></div><button id="tokenBtn">Token</button><button id="refreshBtn">Refresh</button><button id="accessBtn">Access</button><button id="usageBtn">Usage</button><button id="quotaBtn">Quota</button><button id="billingBtn">Billing</button><button id="licenseBtn">License</button><button id="entitlementsBtn">Entitlements</button><button id="paidConfigBtn">Paid Config</button><button id="suiteBtn">Suite</button><button id="opsReportBtn">Ops Report</button><button id="claimsBtn">Claims</button><button id="approvalBtn">Approval</button><button id="approvalDraftBtn">Approval Draft</button><button id="trustBtn">Trust</button><button id="trustDraftBtn">Trust Draft</button><button id="secReviewBtn">Sec Review</button><button id="secReviewDraftBtn">Sec Draft</button><button id="hostedDraftBtn">Hosted Draft</button><button id="hostedFinalizeBtn">Hosted Final</button><button id="hostedDossierBtn">Hosted Dossier</button><button id="hostedAcceptBtn">Hosted Accept</button><button id="backupsBtn">Backups</button><button id="rehearsalsBtn">Rehearsals</button><button id="auditBtn">Audit</button><button id="securityBtn">Security</button><button id="supportBtn">Support</button><button id="readinessBtn">Readiness</button><button id="handoffBtn">Handoff</button></div></header>
 <main>
 <div class="stack">
 <section><h2>Create project</h2><div class="stack"><label>Idea<input id="idea" placeholder="Research idea"></label><label>Field<input id="field" placeholder="machine learning astronomy"></label><label>Target journal<input id="targetJournal" placeholder="General Academic Journal"></label><button class="primary" id="createBtn">Create</button></div></section>
@@ -4283,7 +4390,7 @@ button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 1
 <div class="stack">
 <section><div class="row" style="justify-content:space-between"><h2>Commercial readiness</h2><button id="refreshReadinessBtn">Refresh readiness</button></div><div id="readinessSummary" class="stack"><div class="muted">Loading readiness.</div></div></section>
 <section><h2>Selected project</h2><div id="selected" class="muted">No project selected.</div></section>
-<section><h2>Actions</h2><div class="row"><label style="flex:1">Action<select id="actionSelect"></select></label><label style="width:120px">Limit<input id="limit" type="number" min="1" max="50" value="12"></label></div><div class="grid" style="margin-top:8px"><label>Query<input id="query"></label><label>JSON path<input id="fromJson"></label><label>HTML template path<input id="fromHtml"></label><label>Method note<input id="methodNote"></label><label>Release zip path<input id="releaseZipPath" placeholder="/path/to/release.zip"></label><label>Handoff customer ID<input id="handoffCustomerId" placeholder="CUST-A"></label><label>Handoff customer name<input id="handoffCustomerName" placeholder="Customer A"></label><label>Handoff output dir<input id="handoffOutputDir" placeholder="/path/to/handoff-CUST-A"></label><label>Handoff expires<input id="handoffExpiresAt" placeholder="2099-12-31"></label><label>Handoff seats<input id="handoffSeats" type="number" min="1" value="1"></label><label>Handoff workspace<input id="handoffWorkspace" placeholder="customer-workspace"></label><label>Operator ID<input id="handoffOperatorId" placeholder="customer-admin"></label><label>Billing currency<input id="handoffCurrency" placeholder="USD"></label><label>Job rate<input id="handoffJobRate" type="number" min="0" step="0.01" value="0"></label><label>Backup rate<input id="handoffBackupRate" type="number" min="0" step="0.01" value="0"></label><label>Storage GB-month rate<input id="handoffStorageRate" type="number" min="0" step="0.01" value="0"></label><label>License signing key<input id="handoffSigningKey" placeholder="/path/to/license-signing.pem"></label><label>Suite output dir<input id="suiteOutputDir" placeholder="/path/to/commercial-suite"></label><label>Suite track<select id="suiteTargetTrack"><option value="paid_local_handoff">paid_local_handoff</option><option value="hosted_saas">hosted_saas</option></select></label><label>Suite version label<input id="suiteVersionLabel" placeholder="CUST-A-paid-handoff"></label><label>Suite public key<input id="suitePublicKey" placeholder="/path/to/public.pem"></label><label>Suite timeout<input id="suiteTimeout" type="number" min="1" step="1" value="5"></label><label class="check"><input id="handoffCanExportData" type="checkbox">Data export</label><label class="check"><input id="handoffActivate" type="checkbox">Activate</label><label>Hosted base URL<input id="hostedBaseUrl" placeholder="https://draftpaper.example.com"></label><label>Hosted collection report<input id="hostedCollectionReportPath" placeholder="/path/to/hosted-readiness-evidence-collection.json"></label><label>Hosted controls file<input id="hostedControlsPath" placeholder="/path/to/hosted-readiness-controls.json"></label><label>Hosted evidence file<input id="hostedEvidenceFilePath" placeholder="/path/to/hosted-readiness.json"></label><label>Hosted output file<input id="hostedOutputPath" placeholder="/path/to/hosted-readiness.json"></label><label>Hosted dossier dir<input id="hostedDossierOutputDir" placeholder="/path/to/hosted-readiness-dossier"></label><label>Hosted dossier zip<input id="hostedDossierZipPath" placeholder="/path/to/hosted-readiness-dossier.zip"></label><label>Customer ID<input id="hostedCustomerId" placeholder="CUST-A"></label><label>Customer name<input id="hostedCustomerName" placeholder="Customer A"></label><label>Acceptance output<input id="hostedAcceptanceOutputPath" placeholder="/path/to/hosted-production-acceptance.json"></label><label class="check"><input id="hostedAllowLocal" type="checkbox">Local rehearsal</label><label class="check"><input id="hostedAllowHttp" type="checkbox">Allow HTTP</label></div><div class="row" style="margin-top:10px"><button class="primary" id="runBtn">Run action</button><button id="statusBtn">Status</button><button id="syncBtn">Sync stale</button></div></section>
+<section><h2>Actions</h2><div class="row"><label style="flex:1">Action<select id="actionSelect"></select></label><label style="width:120px">Limit<input id="limit" type="number" min="1" max="50" value="12"></label></div><div class="grid" style="margin-top:8px"><label>Query<input id="query"></label><label>JSON path<input id="fromJson"></label><label>HTML template path<input id="fromHtml"></label><label>Method note<input id="methodNote"></label><label>Release zip path<input id="releaseZipPath" placeholder="/path/to/release.zip"></label><label>Handoff customer ID<input id="handoffCustomerId" placeholder="CUST-A"></label><label>Handoff customer name<input id="handoffCustomerName" placeholder="Customer A"></label><label>Handoff output dir<input id="handoffOutputDir" placeholder="/path/to/handoff-CUST-A"></label><label>Handoff expires<input id="handoffExpiresAt" placeholder="2099-12-31"></label><label>Handoff seats<input id="handoffSeats" type="number" min="1" value="1"></label><label>Handoff workspace<input id="handoffWorkspace" placeholder="customer-workspace"></label><label>Operator ID<input id="handoffOperatorId" placeholder="customer-admin"></label><label>Billing currency<input id="handoffCurrency" placeholder="USD"></label><label>Job rate<input id="handoffJobRate" type="number" min="0" step="0.01" value="0"></label><label>Backup rate<input id="handoffBackupRate" type="number" min="0" step="0.01" value="0"></label><label>Storage GB-month rate<input id="handoffStorageRate" type="number" min="0" step="0.01" value="0"></label><label>License signing key<input id="handoffSigningKey" placeholder="/path/to/license-signing.pem"></label><label>Suite output dir<input id="suiteOutputDir" placeholder="/path/to/commercial-suite"></label><label>Suite track<select id="suiteTargetTrack"><option value="paid_local_handoff">paid_local_handoff</option><option value="hosted_saas">hosted_saas</option></select></label><label>Suite version label<input id="suiteVersionLabel" placeholder="CUST-A-paid-handoff"></label><label>Suite public key<input id="suitePublicKey" placeholder="/path/to/public.pem"></label><label>Suite timeout<input id="suiteTimeout" type="number" min="1" step="1" value="5"></label><label>Ops output JSON<input id="opsOutputPath" placeholder="/path/to/commercial-operations.json"></label><label>Ops markdown<input id="opsMarkdownPath" placeholder="/path/to/commercial-operations.md"></label><label>Ops launch package<input id="opsLaunchPackagePath" placeholder="/path/to/commercial-launch-package.zip"></label><label>Ops track<select id="opsTargetTrack"><option value="paid_local_handoff">paid_local_handoff</option><option value="local_operator_pilot">local_operator_pilot</option><option value="hosted_saas">hosted_saas</option></select></label><label>Ops timeout<input id="opsTimeout" type="number" min="1" step="1" value="5"></label><label class="check"><input id="opsRequireLaunchPackage" type="checkbox">Require launch</label><label class="check"><input id="opsRequireReady" type="checkbox" checked>Require ready</label><label class="check"><input id="handoffCanExportData" type="checkbox">Data export</label><label class="check"><input id="handoffActivate" type="checkbox">Activate</label><label>Hosted base URL<input id="hostedBaseUrl" placeholder="https://draftpaper.example.com"></label><label>Hosted collection report<input id="hostedCollectionReportPath" placeholder="/path/to/hosted-readiness-evidence-collection.json"></label><label>Hosted controls file<input id="hostedControlsPath" placeholder="/path/to/hosted-readiness-controls.json"></label><label>Hosted evidence file<input id="hostedEvidenceFilePath" placeholder="/path/to/hosted-readiness.json"></label><label>Hosted output file<input id="hostedOutputPath" placeholder="/path/to/hosted-readiness.json"></label><label>Hosted dossier dir<input id="hostedDossierOutputDir" placeholder="/path/to/hosted-readiness-dossier"></label><label>Hosted dossier zip<input id="hostedDossierZipPath" placeholder="/path/to/hosted-readiness-dossier.zip"></label><label>Customer ID<input id="hostedCustomerId" placeholder="CUST-A"></label><label>Customer name<input id="hostedCustomerName" placeholder="Customer A"></label><label>Acceptance output<input id="hostedAcceptanceOutputPath" placeholder="/path/to/hosted-production-acceptance.json"></label><label class="check"><input id="hostedAllowLocal" type="checkbox">Local rehearsal</label><label class="check"><input id="hostedAllowHttp" type="checkbox">Allow HTTP</label></div><div class="row" style="margin-top:10px"><button class="primary" id="runBtn">Run action</button><button id="statusBtn">Status</button><button id="syncBtn">Sync stale</button></div></section>
 <section><div class="row" style="justify-content:space-between"><h2>Jobs</h2><button id="cleanupJobsBtn">Cleanup</button></div><div id="jobs"></div></section>
 <section><h2>Output</h2><pre id="output">Ready.</pre></section>
 </div>
@@ -4315,13 +4422,14 @@ async function backupSelected(includeData){{if(!selected)return; const p=await a
 async function prepareClaimDraft(){{if(!selected)return; const p=await api('/api/project-claim-confirmation-draft',{{method:'POST',body:JSON.stringify({{project:selected.slug}})}});show(p);await refreshReadiness()}}
 async function generatePaidConfig(){{const payload={{customer_id:handoffCustomerId.value.trim(),customer_name:handoffCustomerName.value.trim(),output_dir:handoffOutputDir.value.trim(),expires_at:handoffExpiresAt.value.trim(),seats:handoffSeats.value||1,workspace:handoffWorkspace.value.trim(),operator_id:handoffOperatorId.value.trim()||'customer-admin',currency:handoffCurrency.value.trim()||'USD',job_rate:handoffJobRate.value||0,backup_rate:handoffBackupRate.value||0,storage_gb_month_rate:handoffStorageRate.value||0,license_signing_key:handoffSigningKey.value.trim(),can_export_data:handoffCanExportData.checked,activate:handoffActivate.checked}}; const p=await api('/api/paid-handoff-config',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
 async function runCommercialSuite(){{const payload={{customer_id:handoffCustomerId.value.trim()||hostedCustomerId.value.trim(),customer_name:handoffCustomerName.value.trim()||hostedCustomerName.value.trim(),output_dir:suiteOutputDir.value.trim(),base_url:hostedBaseUrl.value.trim(),target_track:suiteTargetTrack.value,signing_key:handoffSigningKey.value.trim(),signing_public_key:suitePublicKey.value.trim(),version_label:suiteVersionLabel.value.trim(),hosted_readiness_dossier:hostedDossierZipPath.value.trim(),timeout:suiteTimeout.value||5}}; const p=await api('/api/commercial-acceptance-suite',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
+async function buildOperationsReport(){{const payload={{customer_id:handoffCustomerId.value.trim()||hostedCustomerId.value.trim(),customer_name:handoffCustomerName.value.trim()||hostedCustomerName.value.trim(),output_file:opsOutputPath.value.trim(),markdown_output:opsMarkdownPath.value.trim(),base_url:hostedBaseUrl.value.trim(),target_track:opsTargetTrack.value,launch_package:opsLaunchPackagePath.value.trim(),require_launch_package:opsRequireLaunchPackage.checked,require_ready:opsRequireReady.checked,timeout:opsTimeout.value||5}}; const p=await api('/api/commercial-operations-report',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
 async function prepareTrustDraft(){{const releaseZip=releaseZipPath.value.trim(); const p=await api('/api/release-trust-draft',{{method:'POST',body:JSON.stringify({{release_zip:releaseZip}})}});show(p);await refreshReadiness()}}
 async function prepareHostedDraft(){{const baseUrl=hostedBaseUrl.value.trim(); const p=await api('/api/hosted-readiness-draft',{{method:'POST',body:JSON.stringify({{base_url:baseUrl}})}});show(p);await refreshReadiness()}}
 async function finalizeHostedReadiness(){{const payload={{collection_report:hostedCollectionReportPath.value.trim(),controls_file:hostedControlsPath.value.trim(),output_file:hostedOutputPath.value.trim(),activate:true}}; const p=await api('/api/hosted-readiness-finalize',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
 async function buildHostedDossier(){{const payload={{hosted_readiness_file:hostedEvidenceFilePath.value.trim()||hostedOutputPath.value.trim(),output_dir:hostedDossierOutputDir.value.trim(),output_zip:hostedDossierZipPath.value.trim(),customer_id:hostedCustomerId.value.trim(),customer_name:hostedCustomerName.value.trim()}}; const p=await api('/api/hosted-readiness-dossier',{{method:'POST',body:JSON.stringify(payload)}}); if(p.zip_path&&!hostedDossierZipPath.value.trim())hostedDossierZipPath.value=p.zip_path; show(p);await refreshReadiness()}}
 async function runHostedAcceptance(){{const payload={{base_url:hostedBaseUrl.value.trim(),hosted_readiness_file:hostedEvidenceFilePath.value.trim()||hostedOutputPath.value.trim(),hosted_readiness_dossier:hostedDossierZipPath.value.trim(),output_file:hostedAcceptanceOutputPath.value.trim(),allow_localhost:hostedAllowLocal.checked,allow_insecure_http:hostedAllowHttp.checked}}; const p=await api('/api/hosted-production-acceptance',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
 tokenBtn.onclick=()=>tokenInput.focus(); saveTokenBtn.onclick=async()=>{{const token=tokenInput.value.trim(); if(token){{localStorage.setItem('draftpaperConsoleToken',token); setTokenStatus('Token saved','ok')}}else{{localStorage.removeItem('draftpaperConsoleToken'); setTokenStatus('Token cleared','')}} await refresh().catch(show)}};
-refreshBtn.onclick=refresh; refreshReadinessBtn.onclick=refreshReadiness; accessBtn.onclick=async()=>show(await api('/api/access-policy')); usageBtn.onclick=async()=>show(await api('/api/usage')); quotaBtn.onclick=async()=>show(await api('/api/quota')); billingBtn.onclick=async()=>show(await api('/api/billing')); licenseBtn.onclick=async()=>show(await api('/api/license')); entitlementsBtn.onclick=async()=>show(await api('/api/license-entitlements')); paidConfigBtn.onclick=generatePaidConfig; suiteBtn.onclick=runCommercialSuite; claimsBtn.onclick=async()=>show(await api('/api/claim-confirmation')); approvalBtn.onclick=async()=>show(await api('/api/license-approval')); approvalDraftBtn.onclick=async()=>{{show(await api('/api/commercial-approval-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; trustBtn.onclick=async()=>show(await api('/api/release-trust')); trustDraftBtn.onclick=prepareTrustDraft; secReviewBtn.onclick=async()=>show(await api('/api/security-review')); secReviewDraftBtn.onclick=async()=>{{show(await api('/api/security-review-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; hostedDraftBtn.onclick=prepareHostedDraft; hostedFinalizeBtn.onclick=finalizeHostedReadiness; hostedDossierBtn.onclick=buildHostedDossier; hostedAcceptBtn.onclick=runHostedAcceptance; backupsBtn.onclick=async()=>show(await api('/api/backups')); rehearsalsBtn.onclick=async()=>show(await api('/api/backups/rehearsals')); auditBtn.onclick=async()=>show(await api('/api/audit?limit=50')); securityBtn.onclick=async()=>show(await api('/api/security-audit')); supportBtn.onclick=downloadSupportBundle; readinessBtn.onclick=async()=>show(await api('/api/commercial-readiness')); handoffBtn.onclick=async()=>show(await api('/api/handoff-readiness')); cleanupJobsBtn.onclick=async()=>{{show(await api('/api/jobs/cleanup',{{method:'POST',body:JSON.stringify({{keep:20}})}}));await refreshJobs()}}; createBtn.onclick=async()=>{{const p=await api('/api/jobs',{{method:'POST',body:JSON.stringify({{action:'create-project',idea:idea.value,field:field.value,target_journal:targetJournal.value||'General Academic Journal'}})}});show(p);await refreshJobs();await refreshReadiness()}}; runBtn.onclick=async()=>start(sel.value); statusBtn.onclick=async()=>start('status'); syncBtn.onclick=async()=>start('sync-artifact-stale'); setInterval(refreshJobs,2500); refresh().catch(show);
+refreshBtn.onclick=refresh; refreshReadinessBtn.onclick=refreshReadiness; accessBtn.onclick=async()=>show(await api('/api/access-policy')); usageBtn.onclick=async()=>show(await api('/api/usage')); quotaBtn.onclick=async()=>show(await api('/api/quota')); billingBtn.onclick=async()=>show(await api('/api/billing')); licenseBtn.onclick=async()=>show(await api('/api/license')); entitlementsBtn.onclick=async()=>show(await api('/api/license-entitlements')); paidConfigBtn.onclick=generatePaidConfig; suiteBtn.onclick=runCommercialSuite; opsReportBtn.onclick=buildOperationsReport; claimsBtn.onclick=async()=>show(await api('/api/claim-confirmation')); approvalBtn.onclick=async()=>show(await api('/api/license-approval')); approvalDraftBtn.onclick=async()=>{{show(await api('/api/commercial-approval-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; trustBtn.onclick=async()=>show(await api('/api/release-trust')); trustDraftBtn.onclick=prepareTrustDraft; secReviewBtn.onclick=async()=>show(await api('/api/security-review')); secReviewDraftBtn.onclick=async()=>{{show(await api('/api/security-review-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; hostedDraftBtn.onclick=prepareHostedDraft; hostedFinalizeBtn.onclick=finalizeHostedReadiness; hostedDossierBtn.onclick=buildHostedDossier; hostedAcceptBtn.onclick=runHostedAcceptance; backupsBtn.onclick=async()=>show(await api('/api/backups')); rehearsalsBtn.onclick=async()=>show(await api('/api/backups/rehearsals')); auditBtn.onclick=async()=>show(await api('/api/audit?limit=50')); securityBtn.onclick=async()=>show(await api('/api/security-audit')); supportBtn.onclick=downloadSupportBundle; readinessBtn.onclick=async()=>show(await api('/api/commercial-readiness')); handoffBtn.onclick=async()=>show(await api('/api/handoff-readiness')); cleanupJobsBtn.onclick=async()=>{{show(await api('/api/jobs/cleanup',{{method:'POST',body:JSON.stringify({{keep:20}})}}));await refreshJobs()}}; createBtn.onclick=async()=>{{const p=await api('/api/jobs',{{method:'POST',body:JSON.stringify({{action:'create-project',idea:idea.value,field:field.value,target_journal:targetJournal.value||'General Academic Journal'}})}});show(p);await refreshJobs();await refreshReadiness()}}; runBtn.onclick=async()=>start(sel.value); statusBtn.onclick=async()=>start('status'); syncBtn.onclick=async()=>start('sync-artifact-stale'); setInterval(refreshJobs,2500); refresh().catch(show);
 </script></body></html>"""
 
 
@@ -4530,6 +4638,25 @@ class Handler(BaseHTTPRequestHandler):
                         signing_public_key=str(payload.get("signing_public_key") or ""),
                         version_label=str(payload.get("version_label") or ""),
                         hosted_readiness_dossier=str(payload.get("hosted_readiness_dossier") or ""),
+                        timeout=float(payload.get("timeout") or 5.0),
+                        context=context,
+                    ),
+                    HTTPStatus.CREATED,
+                )
+            elif parsed.path == "/api/commercial-operations-report":
+                _json(
+                    self,
+                    build_commercial_operations_report_from_console(
+                        customer_id=str(payload.get("customer_id") or ""),
+                        customer_name=str(payload.get("customer_name") or ""),
+                        output_file=str(payload.get("output_file") or ""),
+                        markdown_output=str(payload.get("markdown_output") or ""),
+                        base_url=str(payload.get("base_url") or ""),
+                        token=_request_token(self),
+                        target_track=str(payload.get("target_track") or "paid_local_handoff"),
+                        launch_package=str(payload.get("launch_package") or ""),
+                        require_launch_package=bool(payload.get("require_launch_package")),
+                        require_ready=bool(payload.get("require_ready", True)),
                         timeout=float(payload.get("timeout") or 5.0),
                         context=context,
                     ),

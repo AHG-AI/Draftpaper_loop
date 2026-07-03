@@ -132,6 +132,12 @@
       "environment": "local-mac"
     },
     {
+      "id": "commercial-operations-report",
+      "label": "Commercial Operations Report API",
+      "url": "http://127.0.0.1:4888/api/commercial-operations-report",
+      "environment": "local-mac"
+    },
+    {
       "id": "claim-confirmation",
       "label": "Claim Confirmation Evidence API",
       "url": "http://127.0.0.1:4888/api/claim-confirmation",

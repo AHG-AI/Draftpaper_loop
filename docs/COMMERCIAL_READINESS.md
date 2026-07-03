@@ -1275,6 +1275,15 @@ checks the report digest, embedded error checks, security error count, path
 redaction, sensitive-value redaction, and launch package hash match when a
 launch package is supplied.
 
+The Service Console exposes the same flow as `POST
+/api/commercial-operations-report` and the `Ops Report` button. The route writes
+the JSON report and Markdown summary to a private runtime directory by default,
+then immediately runs `verify_commercial_operations_report.py` against the saved
+JSON. The request token is used only to probe the local console endpoints and is
+not written to the archived operations report. Use the optional launch-package
+path and `Require launch` control when the operations record is part of a paid
+handoff archive.
+
 ## Verified Local Install
 
 After the release zip and dossier verify, install the release into a clean local

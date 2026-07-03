@@ -140,6 +140,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("hostedBaseUrl", html)
         self.assertIn("paidConfigBtn", html)
         self.assertIn("suiteBtn", html)
+        self.assertIn("opsReportBtn", html)
         self.assertIn("handoffCustomerId", html)
         self.assertIn("handoffCustomerName", html)
         self.assertIn("handoffOutputDir", html)
@@ -150,6 +151,13 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("suiteVersionLabel", html)
         self.assertIn("suitePublicKey", html)
         self.assertIn("suiteTimeout", html)
+        self.assertIn("opsOutputPath", html)
+        self.assertIn("opsMarkdownPath", html)
+        self.assertIn("opsLaunchPackagePath", html)
+        self.assertIn("opsTargetTrack", html)
+        self.assertIn("opsTimeout", html)
+        self.assertIn("opsRequireLaunchPackage", html)
+        self.assertIn("opsRequireReady", html)
         self.assertIn("hostedDraftBtn", html)
         self.assertIn("hostedFinalizeBtn", html)
         self.assertIn("hostedDossierBtn", html)
@@ -169,6 +177,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/handoff-readiness", html)
         self.assertIn("/api/paid-handoff-config", html)
         self.assertIn("/api/commercial-acceptance-suite", html)
+        self.assertIn("/api/commercial-operations-report", html)
         self.assertIn("/api/hosted-readiness-draft", html)
         self.assertIn("/api/hosted-readiness-finalize", html)
         self.assertIn("/api/hosted-readiness-dossier", html)
@@ -242,6 +251,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("hosted_readiness_dossier", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_launch_package", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_operations_report", {item["id"] for item in readiness["checks"]})
+        self.assertIn("commercial_operations_report_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("paid_handoff_config_generation", {item["id"] for item in readiness["checks"]})
@@ -406,6 +416,74 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertTrue(suite_path.exists())
             self.assertEqual(suite_path.stat().st_mode & 0o077, 0)
             self.assertIn("commercial_acceptance_suites", str(Path(report["output_dir"])))
+
+    def test_build_commercial_operations_report_from_console_reverifies_report(self) -> None:
+        portal = load_portal_module()
+        captured: dict[str, object] = {}
+
+        def fake_build_commercial_operations_report(**kwargs):
+            captured.update(kwargs)
+            output = Path(kwargs["output"])
+            markdown = Path(kwargs["markdown_output"])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.parent.chmod(0o700)
+            output.write_text(json.dumps({"schema_version": "draftpaper.commercial-operations-report/v1", "status": "ready"}), encoding="utf-8")
+            output.chmod(0o600)
+            markdown.write_text("# Ops\n", encoding="utf-8")
+            markdown.chmod(0o600)
+            return {
+                "schema_version": "draftpaper.commercial-operations-report/v1",
+                "status": "ready",
+                "summary": {"checks": 12, "errors": 0, "warnings": 0},
+                "report_sha256": "f" * 64,
+            }
+
+        def fake_verify_commercial_operations_report(path, **kwargs):
+            captured["verify_path"] = path
+            captured["verify_kwargs"] = kwargs
+            return {"status": "verified", "report_path": str(path), "summary": {"checks": 8, "errors": 0, "warnings": 0}}
+
+        builder = type("FakeCommercialOperationsBuilder", (), {"build_commercial_operations_report": staticmethod(fake_build_commercial_operations_report)})
+        verifier = type("FakeCommercialOperationsVerifier", (), {"verify_commercial_operations_report": staticmethod(fake_verify_commercial_operations_report)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            runtime_root = Path(tmp) / "runtime"
+            launch_package = Path(tmp) / "commercial-launch-package.zip"
+            launch_package.write_bytes(b"launch")
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_commercial_operations_report_builder_module", return_value=builder):
+                    with patch.object(portal, "_commercial_operations_report_verifier_module", return_value=verifier):
+                        report = portal.build_commercial_operations_report_from_console(
+                            customer_id="CUST-A",
+                            customer_name="Customer A",
+                            base_url="http://127.0.0.1:4888",
+                            token="operator-token",
+                            launch_package=str(launch_package),
+                            require_launch_package=True,
+                            context=portal._local_admin_context(),
+                        )
+
+            output_path = Path(report["output_file"])
+            markdown_path = Path(report["markdown_output"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.commercial-operations-report-build/v1")
+            self.assertEqual(report["status"], "verified")
+            self.assertEqual(report["report_status"], "ready")
+            self.assertEqual(report["verification_status"], "verified")
+            self.assertEqual(captured["token"], "operator-token")
+            self.assertEqual(captured["customer_id"], "CUST-A")
+            self.assertEqual(captured["target_track"], "paid_local_handoff")
+            self.assertTrue(captured["require_launch_package"])
+            self.assertEqual(captured["launch_package"], launch_package.resolve())
+            self.assertEqual(captured["verify_path"], output_path)
+            self.assertEqual(captured["verify_kwargs"]["launch_package"], launch_package.resolve())
+            self.assertTrue(captured["verify_kwargs"]["require_ready"])
+            self.assertTrue(output_path.exists())
+            self.assertTrue(markdown_path.exists())
+            self.assertEqual(output_path.stat().st_mode & 0o077, 0)
+            self.assertEqual(markdown_path.stat().st_mode & 0o077, 0)
+            self.assertIn("commercial_operations_reports", str(output_path))
 
     def test_handoff_readiness_blocks_paid_handoff_without_license_or_auth(self) -> None:
         portal = load_portal_module()
