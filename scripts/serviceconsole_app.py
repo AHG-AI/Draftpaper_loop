@@ -4213,6 +4213,36 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
     hosted_report = hosted_readiness_summary(context=context)
     security_errors_clear = int(security.get("summary", {}).get("errors") or 0) == 0
     backup_total = int(backup_report.get("summary", {}).get("total") or 0)
+    external_commercial_evidence_gates = [
+        _security_check(
+            "claim_confirmation_verified",
+            claim_confirmation_report.get("status") == "verified",
+            "error",
+            "Customer manuscript/domain claim confirmation evidence is verified.",
+            "Configure DRAFTPAPER_CLAIM_CONFIRMATION_FILE after the customer or domain reviewer confirms the manuscript claims.",
+        ),
+        _security_check(
+            "commercial_approval_verified",
+            approval_report.get("status") == "verified",
+            "error",
+            "External commercial approval evidence is verified for this customer handoff.",
+            "Configure DRAFTPAPER_COMMERCIAL_APPROVAL_FILE with customer-specific legal, procurement, or contract approval evidence.",
+        ),
+        _security_check(
+            "release_trust_verified",
+            release_trust_report.get("status") == "verified",
+            "error",
+            "External release trust evidence is verified for the signed customer package.",
+            "Configure DRAFTPAPER_RELEASE_TRUST_FILE and release sidecar paths after certificate, notarization, or third-party trust review.",
+        ),
+        _security_check(
+            "security_review_verified",
+            security_review_report.get("status") == "verified",
+            "error",
+            "Formal third-party security review evidence is verified.",
+            "Configure DRAFTPAPER_SECURITY_REVIEW_FILE with formal security review, penetration test, vendor assessment, or compliance evidence.",
+        ),
+    ]
 
     local_pilot_gates = [
         _security_check("core_cli", bool(capability_map.get("core_cli")), "error", "Staged loop CLI is present.", "Restore the draftpaper CLI package."),
@@ -4248,6 +4278,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
         _security_check("license_entitlements_valid", entitlement_report.get("status") == "passed", "error", "License seats, workspaces, customers, and action scopes match configured local access.", "Run /api/license-entitlements and fix every severity=error finding before paid handoff."),
         _security_check("access_control_configured", _auth_required(), "error", "Console authentication is configured for customer/operator handoff.", "Set DRAFTPAPER_CONSOLE_USERS_FILE with hashed tokens or DRAFTPAPER_CONSOLE_TOKEN."),
         _security_check("security_errors_clear", security_errors_clear, "error", "Local security audit has no error findings.", "Run /api/security-audit and fix every severity=error finding."),
+        *[dict(item) for item in external_commercial_evidence_gates],
         _security_check("backups_verified", backup_report.get("status") == "verified", "error", "All visible local backups pass integrity verification.", "Run /api/backups/verify and repair or remove attention backups."),
         _security_check("backup_sample_present", backup_total > 0, "warning", "At least one backup exists for restore rehearsal evidence.", "Create and verify a backup before a paid customer handoff."),
         _security_check("backup_restore_rehearsal", rehearsal.get("status") == "passed", "error", "Current visible backups have passed a restore rehearsal with matching archive checksums.", "Run POST /api/backups/rehearse and fix failed or stale backups before paid handoff."),
@@ -4274,6 +4305,7 @@ def handoff_readiness(*, context: dict[str, Any] | None = None) -> dict[str, Any
 
     hosted_saas_gates = [
         *list(hosted_report.get("gates") or []),
+        *[dict(item) for item in external_commercial_evidence_gates],
         _security_check("hosted_evidence_collection", bool(capability_map.get("hosted_evidence_collection")), "error", "Hosted evidence collector is available for private hashed live URL evidence capture.", "Restore scripts/collect_hosted_readiness_evidence.py."),
         _security_check("hosted_evidence_collection_verification", bool(capability_map.get("hosted_evidence_collection_verification")), "error", "Hosted evidence collection verifier is available for independent artifact hash and redaction checks.", "Restore scripts/verify_hosted_evidence_collection.py."),
         _security_check("hosted_readiness_preparation", bool(capability_map.get("hosted_readiness_preparation")), "error", "Hosted readiness preparation helper is available to fail closed while assembling verified probes and operator evidence.", "Restore scripts/prepare_hosted_readiness.py."),

@@ -28,7 +28,8 @@ Machine-readable readiness is split into three tracks:
 
 - `local_operator_pilot`: local demos, internal trials, and assisted delivery
 - `paid_local_handoff`: customer handoff with configured auth, valid local
-  commercial license grant, verified and rehearsed backups, support bundle, and
+  commercial license grant, verified external claim/approval/release-trust/
+  security-review evidence, verified and rehearsed backups, support bundle, and
   clean security errors
 - `hosted_saas`: self-serve hosted product, enterprise platform, and
   multi-tenant deployment
@@ -60,6 +61,13 @@ Not yet ready for:
 - enterprise SSO/RBAC
 - unattended long-running production queues
 - legal/compliance claims beyond the source-available license package
+
+Paid local handoff readiness is intentionally stricter than assisted local
+pilot readiness. `/api/handoff-readiness` keeps the `paid_local_handoff` track
+blocked until manuscript/domain claim confirmation, commercial approval,
+release trust, and formal security review evidence all verify from private
+runtime files. This prevents a technically packaged local install from being
+mistaken for a customer-approved commercial delivery.
 
 ## Local Operator Console
 

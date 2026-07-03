@@ -10,6 +10,7 @@ import time
 import tempfile
 import unittest
 import zipfile
+from contextlib import ExitStack, contextmanager
 from email.message import Message
 from pathlib import Path
 from unittest.mock import patch
@@ -40,6 +41,27 @@ class FakeRequest:
 
 def token_sha256(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def verified_external_evidence_report() -> dict[str, object]:
+    return {
+        "status": "verified",
+        "summary": {"checks": 1, "passed": 1, "errors": 0, "warnings": 0},
+        "checks": [],
+    }
+
+
+@contextmanager
+def verified_external_commercial_evidence(portal):
+    with ExitStack() as stack:
+        for name in [
+            "claim_confirmation_summary",
+            "commercial_approval_summary",
+            "release_trust_summary",
+            "security_review_summary",
+        ]:
+            stack.enter_context(patch.object(portal, name, return_value=verified_external_evidence_report()))
+        yield
 
 
 def hosted_readiness_payload() -> dict[str, object]:
@@ -820,8 +842,9 @@ class ServiceConsolePortalTests(unittest.TestCase):
             evidence_file.chmod(0o600)
 
             with patch.dict("os.environ", {"DRAFTPAPER_HOSTED_READINESS_FILE": str(evidence_file)}):
-                hosted = portal.hosted_readiness_summary()
-                readiness = portal.handoff_readiness()
+                with verified_external_commercial_evidence(portal):
+                    hosted = portal.hosted_readiness_summary()
+                    readiness = portal.handoff_readiness()
 
         hosted_gates = {item["id"]: item for item in hosted["gates"]}
         tracks = {track["id"]: track for track in readiness["tracks"]}
@@ -1112,7 +1135,8 @@ class ServiceConsolePortalTests(unittest.TestCase):
                         portal.create_project_backup(project.path.name, context=portal._legacy_token_context())
                         rehearsal = portal.rehearse_project_backups(context=portal._legacy_token_context())
                         self.assertEqual(rehearsal["status"], "passed")
-                        readiness = portal.handoff_readiness(context=portal._legacy_token_context())
+                        with verified_external_commercial_evidence(portal):
+                            readiness = portal.handoff_readiness(context=portal._legacy_token_context())
 
         tracks = {track["id"]: track for track in readiness["tracks"]}
         self.assertEqual(readiness["commercial_grade"], "paid_local_handoff_ready")
@@ -1125,6 +1149,68 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertTrue(paid_gates["backup_sample_present"]["passed"])
         self.assertTrue(paid_gates["backup_restore_rehearsal"]["passed"])
         self.assertTrue(paid_gates["billing_rates_configured"]["passed"])
+        self.assertTrue(paid_gates["claim_confirmation_verified"]["passed"])
+        self.assertTrue(paid_gates["commercial_approval_verified"]["passed"])
+        self.assertTrue(paid_gates["release_trust_verified"]["passed"])
+        self.assertTrue(paid_gates["security_review_verified"]["passed"])
+
+    def test_handoff_readiness_blocks_paid_handoff_without_external_commercial_evidence(self) -> None:
+        portal = load_portal_module()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            projects_root = root / "projects"
+            runtime_root = root / "runtime"
+            license_file = root / "commercial-license-grant.json"
+            billing_file = root / "billing-rates.json"
+            payload = {
+                "schema_version": "draftpaper.commercial-license/v1",
+                "license_id": "DPL-COMM-NO-EVIDENCE",
+                "customer_id": "CUST-NO-EVIDENCE",
+                "customer_name": "No Evidence Customer",
+                "grant_type": "paid-local-pilot",
+                "issued_at": "2026-07-01",
+                "expires_at": "2099-12-31",
+                "seats": 3,
+                "features": ["local_console", "paper_loop", "backup_restore"],
+                "workspaces": ["client-handoff"],
+            }
+            payload["grant_sha256"] = portal._license_digest(payload)
+            license_file.write_text(json.dumps(payload), encoding="utf-8")
+            license_file.chmod(0o600)
+            billing_file.write_text(json.dumps({"currency": "USD", "rates": {"job": 1.0, "backup": 2.0, "storage_gb_month": 3.0}}), encoding="utf-8")
+            billing_file.chmod(0o600)
+            project = create_project(root=projects_root, idea="Paid handoff no external evidence", field="workflow engineering")
+
+            env = {
+                "DRAFTPAPER_LICENSE_FILE": str(license_file),
+                "DRAFTPAPER_BILLING_RATES_FILE": str(billing_file),
+                "DRAFTPAPER_CONSOLE_TOKEN": "handoff-token",
+                "DRAFTPAPER_CLAIM_CONFIRMATION_FILE": "",
+                "DRAFTPAPER_COMMERCIAL_APPROVAL_FILE": "",
+                "DRAFTPAPER_RELEASE_TRUST_FILE": "",
+                "DRAFTPAPER_SECURITY_REVIEW_FILE": "",
+            }
+            with patch.dict("os.environ", env):
+                with patch.object(portal, "PROJECTS_ROOT", projects_root.resolve()):
+                    with patch.object(portal, "RUNTIME_ROOT", runtime_root):
+                        portal.create_project_backup(project.path.name, context=portal._legacy_token_context())
+                        rehearsal = portal.rehearse_project_backups(context=portal._legacy_token_context())
+                        self.assertEqual(rehearsal["status"], "passed")
+                        readiness = portal.handoff_readiness(context=portal._legacy_token_context())
+
+        tracks = {track["id"]: track for track in readiness["tracks"]}
+        paid_gates = {item["id"]: item for item in tracks["paid_local_handoff"]["gates"]}
+        self.assertEqual(readiness["commercial_grade"], "local_operator_pilot_ready")
+        self.assertEqual(tracks["paid_local_handoff"]["status"], "blocked")
+        self.assertTrue(paid_gates["commercial_license_valid"]["passed"])
+        self.assertTrue(paid_gates["access_control_configured"]["passed"])
+        self.assertTrue(paid_gates["backups_verified"]["passed"])
+        self.assertFalse(paid_gates["claim_confirmation_verified"]["passed"])
+        self.assertFalse(paid_gates["commercial_approval_verified"]["passed"])
+        self.assertFalse(paid_gates["release_trust_verified"]["passed"])
+        self.assertFalse(paid_gates["security_review_verified"]["passed"])
+        self.assertIn("DRAFTPAPER_COMMERCIAL_APPROVAL_FILE", " ".join(readiness["next_required_actions"]))
 
     def test_payload_int_preserves_zero_for_cleanup_requests(self) -> None:
         portal = load_portal_module()
