@@ -924,6 +924,14 @@ The zip contains:
 - `release_manifest.json`
 - `SHA256SUMS`
 
+The Service Console exposes this as `POST /api/release-package` and the
+`Release` button. It can write into a supplied output directory or into the
+private runtime root by default, optionally signs the zip with the supplied
+OpenSSL private key, and immediately runs `verify_release_package.py` against
+the generated zip, external manifest, SHA256 sidecar, and signature metadata.
+The response records artifact paths and hashes; it does not record the private
+signing-key path.
+
 Before handing the package to another operator, inspect the external manifest,
 confirm `missing_required_files=[]`, verify the `.zip.sha256` value, and verify
 the zip's internal `SHA256SUMS` entries against the files inside the package.

@@ -138,6 +138,12 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("saveTokenBtn", html)
         self.assertIn("releaseZipPath", html)
         self.assertIn("hostedBaseUrl", html)
+        self.assertIn("releasePackageBtn", html)
+        self.assertIn("releaseOutputDir", html)
+        self.assertIn("releaseVersionLabel", html)
+        self.assertIn("releaseSigningKey", html)
+        self.assertIn("releasePublicKey", html)
+        self.assertIn("releaseRequireSignature", html)
         self.assertIn("paidConfigBtn", html)
         self.assertIn("suiteBtn", html)
         self.assertIn("opsReportBtn", html)
@@ -188,6 +194,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/project-stage-graph", html)
         self.assertIn("/api/commercial-readiness", html)
         self.assertIn("/api/handoff-readiness", html)
+        self.assertIn("/api/release-package", html)
         self.assertIn("/api/paid-handoff-config", html)
         self.assertIn("/api/commercial-acceptance-suite", html)
         self.assertIn("/api/commercial-operations-report", html)
@@ -262,6 +269,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("support_bundle", {item["id"] for item in readiness["checks"]})
         self.assertIn("support_bundle_verification", {item["id"] for item in readiness["checks"]})
         self.assertIn("backup_integrity_audit", {item["id"] for item in readiness["checks"]})
+        self.assertIn("release_package_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_readiness_dossier", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_launch_package", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_operations_report", {item["id"] for item in readiness["checks"]})
@@ -290,6 +298,83 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertEqual(tracks["paid_local_handoff"]["status"], "blocked")
         self.assertEqual(tracks["hosted_saas"]["status"], "not_ready")
         self.assertTrue(readiness["remaining_gaps"])
+
+    def test_build_release_package_from_console_verifies_generated_package(self) -> None:
+        portal = load_portal_module()
+        captured: dict[str, object] = {}
+
+        def fake_build_release_package(**kwargs):
+            captured.update(kwargs)
+            output_dir = Path(kwargs["output_dir"])
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.chmod(0o700)
+            zip_path = output_dir / "draftpaper-loop-cust-a.zip"
+            manifest_path = output_dir / "draftpaper-loop-cust-a.manifest.json"
+            sha_path = output_dir / "draftpaper-loop-cust-a.zip.sha256"
+            signature_path = output_dir / "draftpaper-loop-cust-a.zip.sig"
+            public_key_path = output_dir / "draftpaper-loop-cust-a.public.pem"
+            for path in [zip_path, manifest_path, sha_path, signature_path, public_key_path]:
+                path.write_text("artifact\n", encoding="utf-8")
+            return {
+                "status": "packaged",
+                "package": "draftpaper-loop-cust-a",
+                "zip_path": str(zip_path),
+                "manifest_path": str(manifest_path),
+                "sha256_path": str(sha_path),
+                "zip_sha256": "a" * 64,
+                "zip_bytes": 9,
+                "file_count": 42,
+                "missing_required_files": [],
+                "signature": {
+                    "signature_path": str(signature_path),
+                    "public_key_path": str(public_key_path),
+                    "signature_sha256": "b" * 64,
+                    "public_key_sha256": "c" * 64,
+                },
+            }
+
+        def fake_verify_release_package(path, **kwargs):
+            captured["verify_path"] = path
+            captured["verify_kwargs"] = kwargs
+            return {"status": "verified", "zip_path": str(path), "summary": {"checks": 11, "errors": 0, "warnings": 0}}
+
+        builder = type("FakeReleaseBuilder", (), {"build_release_package": staticmethod(fake_build_release_package)})
+        verifier = type("FakeReleaseVerifier", (), {"verify_release_package": staticmethod(fake_verify_release_package)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            signing_key = root / "release-signing.pem"
+            signing_public = root / "release.public.pem"
+            signing_key.write_text("private key placeholder\n", encoding="utf-8")
+            signing_public.write_text("public key placeholder\n", encoding="utf-8")
+            signing_key.chmod(0o600)
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_release_package_builder_module", return_value=builder):
+                    with patch.object(portal, "_release_package_verifier_module", return_value=verifier):
+                        report = portal.build_release_package_from_console(
+                            version_label="CUST-A release",
+                            signing_key=str(signing_key),
+                            signing_public_key=str(signing_public),
+                            require_signature=True,
+                            context=portal._local_admin_context(),
+                        )
+
+            self.assertEqual(report["schema_version"], "draftpaper.release-package-build/v1")
+            self.assertEqual(report["status"], "verified")
+            self.assertEqual(report["package_status"], "packaged")
+            self.assertEqual(report["verification_status"], "verified")
+            self.assertEqual(captured["root"], portal.REPO_ROOT)
+            self.assertEqual(captured["version_label"], "CUST-A release")
+            self.assertEqual(captured["signing_key"], signing_key.resolve())
+            self.assertEqual(captured["signing_public_key"], signing_public.resolve())
+            self.assertEqual(captured["verify_path"], Path(report["zip_path"]).resolve())
+            self.assertTrue(captured["verify_kwargs"]["require_signature"])
+            self.assertEqual(captured["verify_kwargs"]["signature_path"], Path(report["signature"]["signature_path"]).resolve())
+            self.assertEqual(captured["verify_kwargs"]["public_key_path"], Path(report["signature"]["public_key_path"]).resolve())
+            self.assertIn("release_packages", str(Path(report["output_dir"])))
+            self.assertNotIn(str(signing_key), json.dumps(report))
 
     def test_generate_paid_handoff_config_from_console_activates_current_process(self) -> None:
         portal = load_portal_module()
