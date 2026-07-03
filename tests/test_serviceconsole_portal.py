@@ -141,6 +141,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("paidConfigBtn", html)
         self.assertIn("suiteBtn", html)
         self.assertIn("opsReportBtn", html)
+        self.assertIn("installBtn", html)
         self.assertIn("handoffCustomerId", html)
         self.assertIn("handoffCustomerName", html)
         self.assertIn("handoffOutputDir", html)
@@ -158,6 +159,18 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("opsTimeout", html)
         self.assertIn("opsRequireLaunchPackage", html)
         self.assertIn("opsRequireReady", html)
+        self.assertIn("installReleaseZipPath", html)
+        self.assertIn("installRootPath", html)
+        self.assertIn("installManifestPath", html)
+        self.assertIn("installSha256Path", html)
+        self.assertIn("installSignaturePath", html)
+        self.assertIn("installPublicKeyPath", html)
+        self.assertIn("installHandoffDossierPath", html)
+        self.assertIn("installSmokeOutputPath", html)
+        self.assertIn("installRequireSignature", html)
+        self.assertIn("installRequireDossier", html)
+        self.assertIn("installRunSmoke", html)
+        self.assertIn("installForce", html)
         self.assertIn("hostedDraftBtn", html)
         self.assertIn("hostedFinalizeBtn", html)
         self.assertIn("hostedDossierBtn", html)
@@ -178,6 +191,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/paid-handoff-config", html)
         self.assertIn("/api/commercial-acceptance-suite", html)
         self.assertIn("/api/commercial-operations-report", html)
+        self.assertIn("/api/verified-release-install", html)
         self.assertIn("/api/hosted-readiness-draft", html)
         self.assertIn("/api/hosted-readiness-finalize", html)
         self.assertIn("/api/hosted-readiness-dossier", html)
@@ -254,6 +268,7 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("commercial_operations_report_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite", {item["id"] for item in readiness["checks"]})
         self.assertIn("commercial_acceptance_suite_console", {item["id"] for item in readiness["checks"]})
+        self.assertIn("verified_release_install_console", {item["id"] for item in readiness["checks"]})
         self.assertIn("paid_handoff_config_generation", {item["id"] for item in readiness["checks"]})
         self.assertIn("sample_workflow_acceptance", {item["id"] for item in readiness["checks"]})
         self.assertIn("hosted_evidence_collection", {item["id"] for item in readiness["checks"]})
@@ -484,6 +499,92 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertEqual(output_path.stat().st_mode & 0o077, 0)
             self.assertEqual(markdown_path.stat().st_mode & 0o077, 0)
             self.assertIn("commercial_operations_reports", str(output_path))
+
+    def test_install_verified_release_from_console_runs_installer_and_smoke(self) -> None:
+        portal = load_portal_module()
+        captured: dict[str, object] = {}
+
+        def fake_install_verified_release(**kwargs):
+            captured.update(kwargs)
+            install_root = Path(kwargs["install_root"])
+            install_root.mkdir(parents=True, exist_ok=True)
+            install_root.chmod(0o700)
+            installed_dir = install_root / "draftpaper-loop-test"
+            installed_dir.mkdir()
+            manifest = install_root / "draftpaper-install-manifest.json"
+            smoke = install_root / "draftpaper-installed-smoke.json"
+            manifest.write_text("{}\n", encoding="utf-8")
+            smoke.write_text("{}\n", encoding="utf-8")
+            manifest.chmod(0o600)
+            smoke.chmod(0o600)
+            return {
+                "schema_version": "draftpaper.install-verified-release/v1",
+                "status": "installed",
+                "release_zip": str(kwargs["release_zip"]),
+                "install_root": str(install_root),
+                "installed_dir": str(installed_dir),
+                "install_manifest": str(manifest),
+                "installed_smoke_output": str(smoke),
+                "summary": {"checks": 4, "errors": 0, "warnings": 0},
+                "release_verification": {"status": "verified"},
+                "dossier_verification": {"status": "verified"},
+                "installed_smoke": {"status": "passed", "summary": {"checks": 3, "errors": 0, "warnings": 0}},
+            }
+
+        installer = type("FakeVerifiedReleaseInstaller", (), {"install_verified_release": staticmethod(fake_install_verified_release)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            release_zip = root / "draftpaper-loop-test.zip"
+            release_manifest = root / "draftpaper-loop-test.manifest.json"
+            release_sha = root / "draftpaper-loop-test.zip.sha256"
+            release_sig = root / "draftpaper-loop-test.zip.sig"
+            release_pub = root / "draftpaper-loop-test.public.pem"
+            dossier = root / "handoff-dossier.zip"
+            for path in [release_zip, release_manifest, release_sha, release_sig, release_pub, dossier]:
+                path.write_text("artifact\n", encoding="utf-8")
+            runtime_root = root / "runtime"
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_verified_release_installer_module", return_value=installer):
+                    report = portal.install_verified_release_from_console(
+                        release_zip=str(release_zip),
+                        release_manifest=str(release_manifest),
+                        release_sha256_file=str(release_sha),
+                        release_signature=str(release_sig),
+                        release_public_key=str(release_pub),
+                        handoff_dossier=str(dossier),
+                        require_signature=True,
+                        require_dossier=True,
+                        run_smoke=True,
+                        force=True,
+                        context=portal._local_admin_context(),
+                    )
+
+            install_root = Path(report["install_root"])
+            manifest = Path(report["install_manifest"])
+            smoke = Path(report["installed_smoke_output"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.verified-release-install-run/v1")
+            self.assertEqual(report["status"], "installed")
+            self.assertEqual(report["release_verification_status"], "verified")
+            self.assertEqual(report["dossier_verification_status"], "verified")
+            self.assertEqual(report["installed_smoke_status"], "passed")
+            self.assertEqual(captured["release_zip"], release_zip.resolve())
+            self.assertEqual(captured["release_manifest"], release_manifest.resolve())
+            self.assertEqual(captured["release_sha256_file"], release_sha.resolve())
+            self.assertEqual(captured["release_signature"], release_sig.resolve())
+            self.assertEqual(captured["release_public_key"], release_pub.resolve())
+            self.assertEqual(captured["handoff_dossier"], dossier.resolve())
+            self.assertTrue(captured["require_signature"])
+            self.assertTrue(captured["require_dossier"])
+            self.assertTrue(captured["run_smoke"])
+            self.assertTrue(captured["force"])
+            self.assertIn("verified_release_installs", str(install_root))
+            self.assertTrue(manifest.exists())
+            self.assertTrue(smoke.exists())
+            self.assertEqual(manifest.stat().st_mode & 0o077, 0)
+            self.assertEqual(smoke.stat().st_mode & 0o077, 0)
 
     def test_handoff_readiness_blocks_paid_handoff_without_license_or_auth(self) -> None:
         portal = load_portal_module()

@@ -1311,6 +1311,14 @@ extracted package unless `--force` is used, and writes an owner-only
 owner-only `draftpaper-installed-smoke.json` under the install root. It does not
 run external literature search, hosted services, customer jobs, or data imports.
 
+The Service Console exposes the same install path as `POST
+/api/verified-release-install` and the `Install` button. Operators can provide
+the release zip, manifest, SHA256 sidecar, optional detached signature/public key,
+optional handoff dossier, install root, and smoke output path. When no install
+root is supplied, the route installs into a private runtime directory, writes the
+owner-only install manifest, and optionally runs installed-release smoke as part
+of the same admin action.
+
 After installation, run the installed-release smoke test against the extracted
 package directory if it was not already run through `--run-smoke`:
 

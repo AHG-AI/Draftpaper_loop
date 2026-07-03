@@ -138,6 +138,12 @@
       "environment": "local-mac"
     },
     {
+      "id": "verified-release-install",
+      "label": "Verified Release Install API",
+      "url": "http://127.0.0.1:4888/api/verified-release-install",
+      "environment": "local-mac"
+    },
+    {
       "id": "claim-confirmation",
       "label": "Claim Confirmation Evidence API",
       "url": "http://127.0.0.1:4888/api/claim-confirmation",
