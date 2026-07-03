@@ -140,9 +140,14 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("hostedBaseUrl", html)
         self.assertIn("hostedDraftBtn", html)
         self.assertIn("hostedFinalizeBtn", html)
+        self.assertIn("hostedDossierBtn", html)
+        self.assertIn("hostedAcceptBtn", html)
         self.assertIn("hostedCollectionReportPath", html)
         self.assertIn("hostedControlsPath", html)
+        self.assertIn("hostedEvidenceFilePath", html)
         self.assertIn("hostedOutputPath", html)
+        self.assertIn("hostedDossierZipPath", html)
+        self.assertIn("hostedAcceptanceOutputPath", html)
         self.assertIn("readinessSummary", html)
         self.assertIn("refreshReadiness", html)
         self.assertIn("Hosted gaps", html)
@@ -152,6 +157,8 @@ class ServiceConsolePortalTests(unittest.TestCase):
         self.assertIn("/api/handoff-readiness", html)
         self.assertIn("/api/hosted-readiness-draft", html)
         self.assertIn("/api/hosted-readiness-finalize", html)
+        self.assertIn("/api/hosted-readiness-dossier", html)
+        self.assertIn("/api/hosted-production-acceptance", html)
         self.assertNotIn("prompt(", html)
 
     def test_project_summary_reports_next_action(self) -> None:
@@ -437,6 +444,102 @@ class ServiceConsolePortalTests(unittest.TestCase):
             self.assertIn("hosted_readiness_final", str(output_file.parent))
             self.assertEqual(output_file.stat().st_mode & 0o077, 0)
             self.assertEqual(report_output.stat().st_mode & 0o077, 0)
+
+    def test_build_hosted_readiness_dossier_from_console_verifies_zip(self) -> None:
+        portal = load_portal_module()
+
+        def fake_build_hosted_readiness_dossier(*, evidence_file, output_dir, output_zip=None, customer_id="", customer_name=""):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.chmod(0o700)
+            zip_path = output_zip or output_dir / "hosted-readiness-dossier.zip"
+            zip_path.write_bytes(b"zip")
+            zip_path.chmod(0o600)
+            return {
+                "status": "ready",
+                "zip_path": str(zip_path),
+                "summary": {"checks": 4, "errors": 0, "warnings": 0},
+                "customer": {"id": customer_id, "name": customer_name},
+                "source": str(evidence_file),
+            }
+
+        def fake_verify_hosted_readiness_dossier(path):
+            return {"status": "verified", "zip_path": str(path), "summary": {"checks": 6, "errors": 0, "warnings": 0}}
+
+        builder = type("FakeHostedDossierBuilder", (), {"build_hosted_readiness_dossier": staticmethod(fake_build_hosted_readiness_dossier)})
+        verifier = type("FakeHostedDossierVerifier", (), {"verify_hosted_readiness_dossier": staticmethod(fake_verify_hosted_readiness_dossier)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            evidence_file = root / "hosted-readiness.json"
+            evidence_file.write_text(json.dumps({"schema_version": "draftpaper.hosted-readiness/v1"}), encoding="utf-8")
+            evidence_file.chmod(0o600)
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_hosted_readiness_dossier_builder_module", return_value=builder):
+                    with patch.object(portal, "_hosted_readiness_dossier_verifier_module", return_value=verifier):
+                        report = portal.build_hosted_readiness_dossier_from_console(
+                            hosted_readiness_file=str(evidence_file),
+                            customer_id="CUST-HOSTED",
+                            customer_name="Hosted Customer",
+                            context=portal._local_admin_context(),
+                        )
+
+            zip_path = Path(report["zip_path"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.hosted-readiness-dossier-build/v1")
+            self.assertEqual(report["status"], "verified")
+            self.assertEqual(report["verification_status"], "verified")
+            self.assertTrue(zip_path.exists())
+            self.assertEqual(zip_path.stat().st_mode & 0o077, 0)
+            self.assertIn("hosted_readiness_dossiers", str(zip_path.parent))
+
+    def test_run_hosted_production_acceptance_from_console_writes_private_report(self) -> None:
+        portal = load_portal_module()
+        captured: dict[str, object] = {}
+
+        def fake_run_hosted_production_acceptance(**kwargs):
+            captured.update(kwargs)
+            return {
+                "schema_version": "draftpaper.hosted-production-acceptance/v1",
+                "status": "passed",
+                "summary": {"checks": 12, "errors": 0, "warnings": 0},
+                "evidence_summary": {"base_url": kwargs["base_url"]},
+            }
+
+        acceptance = type("FakeHostedAcceptance", (), {"run_hosted_production_acceptance": staticmethod(fake_run_hosted_production_acceptance)})
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            runtime_root = root / "runtime"
+            evidence_file = root / "hosted-readiness.json"
+            dossier_zip = root / "hosted-readiness-dossier.zip"
+            evidence_file.write_text(json.dumps({"schema_version": "draftpaper.hosted-readiness/v1"}), encoding="utf-8")
+            dossier_zip.write_bytes(b"zip")
+            evidence_file.chmod(0o600)
+            dossier_zip.chmod(0o600)
+
+            with patch.object(portal, "RUNTIME_ROOT", runtime_root.resolve()):
+                with patch.object(portal, "_hosted_production_acceptance_module", return_value=acceptance):
+                    report = portal.run_hosted_production_acceptance_from_console(
+                        base_url="https://draftpaper.example.com",
+                        token="operator-token",
+                        hosted_readiness_file=str(evidence_file),
+                        hosted_readiness_dossier=str(dossier_zip),
+                        context=portal._local_admin_context(),
+                    )
+
+            output_file = Path(report["output_file"])
+
+            self.assertEqual(report["schema_version"], "draftpaper.hosted-production-acceptance-run/v1")
+            self.assertEqual(report["status"], "passed")
+            self.assertEqual(captured["base_url"], "https://draftpaper.example.com")
+            self.assertEqual(captured["token"], "operator-token")
+            self.assertFalse(captured["allow_localhost"])
+            self.assertFalse(captured["allow_insecure_http"])
+            self.assertTrue(output_file.exists())
+            self.assertEqual(output_file.stat().st_mode & 0o077, 0)
+            self.assertIn("hosted_production_acceptance", str(output_file.parent))
 
     def test_handoff_readiness_accepts_configured_paid_local_customer_handoff(self) -> None:
         portal = load_portal_module()

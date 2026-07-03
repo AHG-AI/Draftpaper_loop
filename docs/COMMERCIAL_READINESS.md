@@ -1521,6 +1521,16 @@ process. That activation is only process-local; durable hosted operation still
 requires configuring `DRAFTPAPER_HOSTED_READINESS_FILE` in the deployed service
 environment.
 
+The hosted handoff can then continue in the Service Console without dropping to
+the shell. `POST /api/hosted-readiness-dossier` and the `Hosted Dossier` button
+build and independently verify a customer-facing hosted readiness dossier from
+the configured or supplied `hosted-readiness.json`. `POST
+/api/hosted-production-acceptance` and the `Hosted Accept` button run the
+hosted production acceptance probe against the supplied hosted base URL, local
+hosted readiness evidence, and verified dossier zip, then write an owner-only
+acceptance report. Production acceptance still rejects localhost and plain HTTP
+unless the operator explicitly enables rehearsal flags in the console.
+
 Do not treat a successful collection or preparation report as hosted SaaS
 readiness by itself. The prepared `hosted-readiness.json` must still pass
 `validate_hosted_readiness.py`, the hosted readiness dossier verifier, and hosted

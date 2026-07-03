@@ -78,6 +78,18 @@
       "environment": "local-mac"
     },
     {
+      "id": "hosted-readiness-dossier",
+      "label": "Hosted Readiness Dossier API",
+      "url": "http://127.0.0.1:4888/api/hosted-readiness-dossier",
+      "environment": "local-mac"
+    },
+    {
+      "id": "hosted-production-acceptance",
+      "label": "Hosted Production Acceptance API",
+      "url": "http://127.0.0.1:4888/api/hosted-production-acceptance",
+      "environment": "local-mac"
+    },
+    {
       "id": "access-policy",
       "label": "Access Policy API",
       "url": "http://127.0.0.1:4888/api/access-policy",

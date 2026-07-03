@@ -1578,6 +1578,45 @@ def _hosted_readiness_preparer_module() -> Any:
     return module
 
 
+def _hosted_readiness_dossier_builder_module() -> Any:
+    builder_path = REPO_ROOT / "scripts" / "build_hosted_readiness_dossier.py"
+    spec = importlib.util.spec_from_file_location("draftpaper_build_hosted_readiness_dossier", builder_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scripts/build_hosted_readiness_dossier.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _hosted_readiness_dossier_verifier_module() -> Any:
+    verifier_path = REPO_ROOT / "scripts" / "verify_hosted_readiness_dossier.py"
+    spec = importlib.util.spec_from_file_location("draftpaper_verify_hosted_readiness_dossier", verifier_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scripts/verify_hosted_readiness_dossier.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _hosted_production_acceptance_module() -> Any:
+    acceptance_path = REPO_ROOT / "scripts" / "run_hosted_production_acceptance.py"
+    spec = importlib.util.spec_from_file_location("draftpaper_run_hosted_production_acceptance", acceptance_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load scripts/run_hosted_production_acceptance.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _explicit_or_configured_hosted_readiness_file(raw_path: str = "") -> Path:
+    if raw_path.strip():
+        return Path(raw_path).expanduser().resolve()
+    path = _hosted_readiness_file()
+    if path is None:
+        raise ValueError("hosted_readiness_file is required or DRAFTPAPER_HOSTED_READINESS_FILE must be configured")
+    return path
+
+
 def prepare_hosted_readiness_draft(
     *,
     base_url: str = "",
@@ -1700,6 +1739,132 @@ def finalize_hosted_readiness(
         "notes": [
             "This finalizes hosted SaaS readiness evidence from a verified collection report and completed operator controls.",
             "Activation only affects the current console process; configure DRAFTPAPER_HOSTED_READINESS_FILE in the deployed service environment for durable hosted SaaS readiness.",
+        ],
+    }
+
+
+def build_hosted_readiness_dossier_from_console(
+    *,
+    hosted_readiness_file: str = "",
+    output_dir: str = "",
+    output_zip: str = "",
+    customer_id: str = "",
+    customer_name: str = "",
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = context or _local_admin_context()
+    _require_role(context, {"admin"})
+    evidence_path = _explicit_or_configured_hosted_readiness_file(hosted_readiness_file)
+    generated_at = _utc_timestamp()
+    customer_slug = _safe_slug(customer_id or customer_name or evidence_path.stem)
+    dossier_root = RUNTIME_ROOT / "hosted_readiness_dossiers" / _safe_slug(f"{customer_slug}-{generated_at}")
+    output_dir_path = Path(output_dir).expanduser().resolve() if output_dir.strip() else dossier_root
+    output_zip_path = Path(output_zip).expanduser().resolve() if output_zip.strip() else None
+    builder = _hosted_readiness_dossier_builder_module()
+    dossier = builder.build_hosted_readiness_dossier(
+        evidence_file=evidence_path,
+        output_dir=output_dir_path,
+        output_zip=output_zip_path,
+        customer_id=customer_id,
+        customer_name=customer_name,
+    )
+    verification: dict[str, Any] = {}
+    zip_path_text = str(dossier.get("zip_path") or "")
+    zip_path = Path(zip_path_text).expanduser() if zip_path_text else None
+    if zip_path is not None and zip_path.exists():
+        verifier = _hosted_readiness_dossier_verifier_module()
+        verification = verifier.verify_hosted_readiness_dossier(zip_path)
+    status = "verified" if dossier.get("status") == "ready" and verification.get("status") == "verified" else "attention"
+    append_audit(
+        "hosted_readiness_dossier_built",
+        actor=str(context.get("id") or "unknown"),
+        status=status,
+        hosted_readiness_file=str(evidence_path),
+        zip_path=str(zip_path) if zip_path is not None else "",
+        verification_status=verification.get("status"),
+    )
+    return {
+        "schema_version": "draftpaper.hosted-readiness-dossier-build/v1",
+        "status": status,
+        "generated_at": generated_at,
+        "hosted_readiness_file": str(evidence_path),
+        "output_dir": str(output_dir_path),
+        "zip_path": str(zip_path) if zip_path is not None else "",
+        "dossier_status": dossier.get("status"),
+        "dossier_summary": dossier.get("summary") if isinstance(dossier.get("summary"), dict) else {},
+        "verification_status": verification.get("status"),
+        "verification_summary": verification.get("summary") if isinstance(verification.get("summary"), dict) else {},
+        "dossier": dossier,
+        "verification": verification,
+        "notes": [
+            "This builds and verifies a customer-facing hosted readiness dossier from hosted-readiness.json.",
+            "The dossier excludes raw hosted readiness JSON, private runtime files, tokens, keys, signatures, archives, and customer project data.",
+        ],
+    }
+
+
+def run_hosted_production_acceptance_from_console(
+    *,
+    base_url: str,
+    token: str = "",
+    hosted_readiness_file: str = "",
+    hosted_readiness_dossier: str = "",
+    output_file: str = "",
+    timeout: float = 8.0,
+    allow_localhost: bool = False,
+    allow_insecure_http: bool = False,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    context = context or _local_admin_context()
+    _require_role(context, {"admin"})
+    base_url = base_url.strip()
+    if not base_url:
+        raise ValueError("base_url is required")
+    evidence_path = _explicit_or_configured_hosted_readiness_file(hosted_readiness_file)
+    if not hosted_readiness_dossier.strip():
+        raise ValueError("hosted_readiness_dossier is required")
+    dossier_path = Path(hosted_readiness_dossier).expanduser().resolve()
+    generated_at = _utc_timestamp()
+    acceptance_root = RUNTIME_ROOT / "hosted_production_acceptance" / _safe_slug(f"{urllib.parse.urlparse(base_url).netloc or 'hosted'}-{generated_at}")
+    explicit_output = bool(output_file.strip())
+    output_path = Path(output_file).expanduser().resolve() if explicit_output else acceptance_root / "hosted-production-acceptance.json"
+    acceptance = _hosted_production_acceptance_module()
+    report = acceptance.run_hosted_production_acceptance(
+        base_url=base_url,
+        token=token,
+        evidence_file=evidence_path,
+        hosted_readiness_dossier=dossier_path,
+        allow_localhost=allow_localhost,
+        allow_insecure_http=allow_insecure_http,
+        timeout=timeout,
+    )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    if not explicit_output:
+        output_path.parent.chmod(0o700)
+    _write_json(output_path, report)
+    output_path.chmod(0o600)
+    append_audit(
+        "hosted_production_acceptance_run",
+        actor=str(context.get("id") or "unknown"),
+        status=report.get("status"),
+        base_url=base_url,
+        hosted_readiness_file=str(evidence_path),
+        hosted_readiness_dossier=str(dossier_path),
+        output_file=str(output_path),
+    )
+    return {
+        "schema_version": "draftpaper.hosted-production-acceptance-run/v1",
+        "status": report.get("status"),
+        "generated_at": generated_at,
+        "base_url": base_url.rstrip("/"),
+        "hosted_readiness_file": str(evidence_path),
+        "hosted_readiness_dossier": str(dossier_path),
+        "output_file": str(output_path),
+        "summary": report.get("summary") if isinstance(report.get("summary"), dict) else {},
+        "report": report,
+        "notes": [
+            "This runs hosted production acceptance against the supplied hosted URL and writes an owner-only evidence report.",
+            "Localhost and plain HTTP remain rejected unless the request explicitly sets rehearsal flags.",
         ],
     }
 
@@ -3870,7 +4035,7 @@ def index_html() -> str:
 header{{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:18px 22px;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0}}
 h1{{font-size:20px;margin:0}} h2{{font-size:15px;margin:0 0 10px}} main{{display:grid;grid-template-columns:360px 1fr;gap:18px;padding:18px;max-width:1440px;margin:auto}}
 section{{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px}} .stack{{display:grid;gap:12px}} .row{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
-label{{display:grid;gap:4px;color:var(--muted);font-size:12px}} input,select{{width:100%;border:1px solid #bcc7d5;border-radius:6px;padding:7px 8px}}
+label{{display:grid;gap:4px;color:var(--muted);font-size:12px}} label.check{{display:flex;align-items:center;gap:6px}} label.check input{{width:auto}} input,select{{width:100%;border:1px solid #bcc7d5;border-radius:6px;padding:7px 8px}}
 button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 10px;cursor:pointer}} button.primary{{background:var(--accent);color:#fff;border-color:var(--accent)}}
 .token-inline{{display:flex;align-items:center;gap:6px}} .token-inline input{{width:160px}} .token-status.bad{{color:var(--bad)}} .token-status.ok{{color:var(--accent)}}
 .project{{border:1px solid var(--line);border-radius:8px;padding:10px;display:grid;gap:8px;cursor:pointer}} .project.active{{border-color:var(--accent);box-shadow:0 0 0 2px rgba(29,120,116,.12)}}
@@ -3881,7 +4046,7 @@ button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 1
 @media(max-width:920px){{main{{grid-template-columns:1fr}} header{{align-items:flex-start;flex-direction:column}}}}
 </style></head>
 <body>
-<header><div><h1>Draftpaper Loop Console</h1><div class="muted">Local projects: {PROJECTS_ROOT}</div></div><div class="row"><div class="token-inline"><input id="tokenInput" type="password" autocomplete="off" placeholder="Operator token"><button id="saveTokenBtn">Save token</button><span id="tokenStatus" class="token-status muted"></span></div><button id="tokenBtn">Token</button><button id="refreshBtn">Refresh</button><button id="accessBtn">Access</button><button id="usageBtn">Usage</button><button id="quotaBtn">Quota</button><button id="billingBtn">Billing</button><button id="licenseBtn">License</button><button id="entitlementsBtn">Entitlements</button><button id="claimsBtn">Claims</button><button id="approvalBtn">Approval</button><button id="approvalDraftBtn">Approval Draft</button><button id="trustBtn">Trust</button><button id="trustDraftBtn">Trust Draft</button><button id="secReviewBtn">Sec Review</button><button id="secReviewDraftBtn">Sec Draft</button><button id="hostedDraftBtn">Hosted Draft</button><button id="hostedFinalizeBtn">Hosted Final</button><button id="backupsBtn">Backups</button><button id="rehearsalsBtn">Rehearsals</button><button id="auditBtn">Audit</button><button id="securityBtn">Security</button><button id="supportBtn">Support</button><button id="readinessBtn">Readiness</button><button id="handoffBtn">Handoff</button></div></header>
+<header><div><h1>Draftpaper Loop Console</h1><div class="muted">Local projects: {PROJECTS_ROOT}</div></div><div class="row"><div class="token-inline"><input id="tokenInput" type="password" autocomplete="off" placeholder="Operator token"><button id="saveTokenBtn">Save token</button><span id="tokenStatus" class="token-status muted"></span></div><button id="tokenBtn">Token</button><button id="refreshBtn">Refresh</button><button id="accessBtn">Access</button><button id="usageBtn">Usage</button><button id="quotaBtn">Quota</button><button id="billingBtn">Billing</button><button id="licenseBtn">License</button><button id="entitlementsBtn">Entitlements</button><button id="claimsBtn">Claims</button><button id="approvalBtn">Approval</button><button id="approvalDraftBtn">Approval Draft</button><button id="trustBtn">Trust</button><button id="trustDraftBtn">Trust Draft</button><button id="secReviewBtn">Sec Review</button><button id="secReviewDraftBtn">Sec Draft</button><button id="hostedDraftBtn">Hosted Draft</button><button id="hostedFinalizeBtn">Hosted Final</button><button id="hostedDossierBtn">Hosted Dossier</button><button id="hostedAcceptBtn">Hosted Accept</button><button id="backupsBtn">Backups</button><button id="rehearsalsBtn">Rehearsals</button><button id="auditBtn">Audit</button><button id="securityBtn">Security</button><button id="supportBtn">Support</button><button id="readinessBtn">Readiness</button><button id="handoffBtn">Handoff</button></div></header>
 <main>
 <div class="stack">
 <section><h2>Create project</h2><div class="stack"><label>Idea<input id="idea" placeholder="Research idea"></label><label>Field<input id="field" placeholder="machine learning astronomy"></label><label>Target journal<input id="targetJournal" placeholder="General Academic Journal"></label><button class="primary" id="createBtn">Create</button></div></section>
@@ -3890,7 +4055,7 @@ button{{border:1px solid #b8c4d2;background:#fff;border-radius:6px;padding:7px 1
 <div class="stack">
 <section><div class="row" style="justify-content:space-between"><h2>Commercial readiness</h2><button id="refreshReadinessBtn">Refresh readiness</button></div><div id="readinessSummary" class="stack"><div class="muted">Loading readiness.</div></div></section>
 <section><h2>Selected project</h2><div id="selected" class="muted">No project selected.</div></section>
-<section><h2>Actions</h2><div class="row"><label style="flex:1">Action<select id="actionSelect"></select></label><label style="width:120px">Limit<input id="limit" type="number" min="1" max="50" value="12"></label></div><div class="grid" style="margin-top:8px"><label>Query<input id="query"></label><label>JSON path<input id="fromJson"></label><label>HTML template path<input id="fromHtml"></label><label>Method note<input id="methodNote"></label><label>Release zip path<input id="releaseZipPath" placeholder="/path/to/release.zip"></label><label>Hosted base URL<input id="hostedBaseUrl" placeholder="https://draftpaper.example.com"></label><label>Hosted collection report<input id="hostedCollectionReportPath" placeholder="/path/to/hosted-readiness-evidence-collection.json"></label><label>Hosted controls file<input id="hostedControlsPath" placeholder="/path/to/hosted-readiness-controls.json"></label><label>Hosted output file<input id="hostedOutputPath" placeholder="/path/to/hosted-readiness.json"></label></div><div class="row" style="margin-top:10px"><button class="primary" id="runBtn">Run action</button><button id="statusBtn">Status</button><button id="syncBtn">Sync stale</button></div></section>
+<section><h2>Actions</h2><div class="row"><label style="flex:1">Action<select id="actionSelect"></select></label><label style="width:120px">Limit<input id="limit" type="number" min="1" max="50" value="12"></label></div><div class="grid" style="margin-top:8px"><label>Query<input id="query"></label><label>JSON path<input id="fromJson"></label><label>HTML template path<input id="fromHtml"></label><label>Method note<input id="methodNote"></label><label>Release zip path<input id="releaseZipPath" placeholder="/path/to/release.zip"></label><label>Hosted base URL<input id="hostedBaseUrl" placeholder="https://draftpaper.example.com"></label><label>Hosted collection report<input id="hostedCollectionReportPath" placeholder="/path/to/hosted-readiness-evidence-collection.json"></label><label>Hosted controls file<input id="hostedControlsPath" placeholder="/path/to/hosted-readiness-controls.json"></label><label>Hosted evidence file<input id="hostedEvidenceFilePath" placeholder="/path/to/hosted-readiness.json"></label><label>Hosted output file<input id="hostedOutputPath" placeholder="/path/to/hosted-readiness.json"></label><label>Hosted dossier dir<input id="hostedDossierOutputDir" placeholder="/path/to/hosted-readiness-dossier"></label><label>Hosted dossier zip<input id="hostedDossierZipPath" placeholder="/path/to/hosted-readiness-dossier.zip"></label><label>Customer ID<input id="hostedCustomerId" placeholder="CUST-A"></label><label>Customer name<input id="hostedCustomerName" placeholder="Customer A"></label><label>Acceptance output<input id="hostedAcceptanceOutputPath" placeholder="/path/to/hosted-production-acceptance.json"></label><label class="check"><input id="hostedAllowLocal" type="checkbox">Local rehearsal</label><label class="check"><input id="hostedAllowHttp" type="checkbox">Allow HTTP</label></div><div class="row" style="margin-top:10px"><button class="primary" id="runBtn">Run action</button><button id="statusBtn">Status</button><button id="syncBtn">Sync stale</button></div></section>
 <section><div class="row" style="justify-content:space-between"><h2>Jobs</h2><button id="cleanupJobsBtn">Cleanup</button></div><div id="jobs"></div></section>
 <section><h2>Output</h2><pre id="output">Ready.</pre></section>
 </div>
@@ -3923,8 +4088,10 @@ async function prepareClaimDraft(){{if(!selected)return; const p=await api('/api
 async function prepareTrustDraft(){{const releaseZip=releaseZipPath.value.trim(); const p=await api('/api/release-trust-draft',{{method:'POST',body:JSON.stringify({{release_zip:releaseZip}})}});show(p);await refreshReadiness()}}
 async function prepareHostedDraft(){{const baseUrl=hostedBaseUrl.value.trim(); const p=await api('/api/hosted-readiness-draft',{{method:'POST',body:JSON.stringify({{base_url:baseUrl}})}});show(p);await refreshReadiness()}}
 async function finalizeHostedReadiness(){{const payload={{collection_report:hostedCollectionReportPath.value.trim(),controls_file:hostedControlsPath.value.trim(),output_file:hostedOutputPath.value.trim(),activate:true}}; const p=await api('/api/hosted-readiness-finalize',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
+async function buildHostedDossier(){{const payload={{hosted_readiness_file:hostedEvidenceFilePath.value.trim()||hostedOutputPath.value.trim(),output_dir:hostedDossierOutputDir.value.trim(),output_zip:hostedDossierZipPath.value.trim(),customer_id:hostedCustomerId.value.trim(),customer_name:hostedCustomerName.value.trim()}}; const p=await api('/api/hosted-readiness-dossier',{{method:'POST',body:JSON.stringify(payload)}}); if(p.zip_path&&!hostedDossierZipPath.value.trim())hostedDossierZipPath.value=p.zip_path; show(p);await refreshReadiness()}}
+async function runHostedAcceptance(){{const payload={{base_url:hostedBaseUrl.value.trim(),hosted_readiness_file:hostedEvidenceFilePath.value.trim()||hostedOutputPath.value.trim(),hosted_readiness_dossier:hostedDossierZipPath.value.trim(),output_file:hostedAcceptanceOutputPath.value.trim(),allow_localhost:hostedAllowLocal.checked,allow_insecure_http:hostedAllowHttp.checked}}; const p=await api('/api/hosted-production-acceptance',{{method:'POST',body:JSON.stringify(payload)}});show(p);await refreshReadiness()}}
 tokenBtn.onclick=()=>tokenInput.focus(); saveTokenBtn.onclick=async()=>{{const token=tokenInput.value.trim(); if(token){{localStorage.setItem('draftpaperConsoleToken',token); setTokenStatus('Token saved','ok')}}else{{localStorage.removeItem('draftpaperConsoleToken'); setTokenStatus('Token cleared','')}} await refresh().catch(show)}};
-refreshBtn.onclick=refresh; refreshReadinessBtn.onclick=refreshReadiness; accessBtn.onclick=async()=>show(await api('/api/access-policy')); usageBtn.onclick=async()=>show(await api('/api/usage')); quotaBtn.onclick=async()=>show(await api('/api/quota')); billingBtn.onclick=async()=>show(await api('/api/billing')); licenseBtn.onclick=async()=>show(await api('/api/license')); entitlementsBtn.onclick=async()=>show(await api('/api/license-entitlements')); claimsBtn.onclick=async()=>show(await api('/api/claim-confirmation')); approvalBtn.onclick=async()=>show(await api('/api/license-approval')); approvalDraftBtn.onclick=async()=>{{show(await api('/api/commercial-approval-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; trustBtn.onclick=async()=>show(await api('/api/release-trust')); trustDraftBtn.onclick=prepareTrustDraft; secReviewBtn.onclick=async()=>show(await api('/api/security-review')); secReviewDraftBtn.onclick=async()=>{{show(await api('/api/security-review-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; hostedDraftBtn.onclick=prepareHostedDraft; hostedFinalizeBtn.onclick=finalizeHostedReadiness; backupsBtn.onclick=async()=>show(await api('/api/backups')); rehearsalsBtn.onclick=async()=>show(await api('/api/backups/rehearsals')); auditBtn.onclick=async()=>show(await api('/api/audit?limit=50')); securityBtn.onclick=async()=>show(await api('/api/security-audit')); supportBtn.onclick=downloadSupportBundle; readinessBtn.onclick=async()=>show(await api('/api/commercial-readiness')); handoffBtn.onclick=async()=>show(await api('/api/handoff-readiness')); cleanupJobsBtn.onclick=async()=>{{show(await api('/api/jobs/cleanup',{{method:'POST',body:JSON.stringify({{keep:20}})}}));await refreshJobs()}}; createBtn.onclick=async()=>{{const p=await api('/api/jobs',{{method:'POST',body:JSON.stringify({{action:'create-project',idea:idea.value,field:field.value,target_journal:targetJournal.value||'General Academic Journal'}})}});show(p);await refreshJobs();await refreshReadiness()}}; runBtn.onclick=async()=>start(sel.value); statusBtn.onclick=async()=>start('status'); syncBtn.onclick=async()=>start('sync-artifact-stale'); setInterval(refreshJobs,2500); refresh().catch(show);
+refreshBtn.onclick=refresh; refreshReadinessBtn.onclick=refreshReadiness; accessBtn.onclick=async()=>show(await api('/api/access-policy')); usageBtn.onclick=async()=>show(await api('/api/usage')); quotaBtn.onclick=async()=>show(await api('/api/quota')); billingBtn.onclick=async()=>show(await api('/api/billing')); licenseBtn.onclick=async()=>show(await api('/api/license')); entitlementsBtn.onclick=async()=>show(await api('/api/license-entitlements')); claimsBtn.onclick=async()=>show(await api('/api/claim-confirmation')); approvalBtn.onclick=async()=>show(await api('/api/license-approval')); approvalDraftBtn.onclick=async()=>{{show(await api('/api/commercial-approval-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; trustBtn.onclick=async()=>show(await api('/api/release-trust')); trustDraftBtn.onclick=prepareTrustDraft; secReviewBtn.onclick=async()=>show(await api('/api/security-review')); secReviewDraftBtn.onclick=async()=>{{show(await api('/api/security-review-draft',{{method:'POST',body:'{{}}'}}));await refreshReadiness()}}; hostedDraftBtn.onclick=prepareHostedDraft; hostedFinalizeBtn.onclick=finalizeHostedReadiness; hostedDossierBtn.onclick=buildHostedDossier; hostedAcceptBtn.onclick=runHostedAcceptance; backupsBtn.onclick=async()=>show(await api('/api/backups')); rehearsalsBtn.onclick=async()=>show(await api('/api/backups/rehearsals')); auditBtn.onclick=async()=>show(await api('/api/audit?limit=50')); securityBtn.onclick=async()=>show(await api('/api/security-audit')); supportBtn.onclick=downloadSupportBundle; readinessBtn.onclick=async()=>show(await api('/api/commercial-readiness')); handoffBtn.onclick=async()=>show(await api('/api/handoff-readiness')); cleanupJobsBtn.onclick=async()=>{{show(await api('/api/jobs/cleanup',{{method:'POST',body:JSON.stringify({{keep:20}})}}));await refreshJobs()}}; createBtn.onclick=async()=>{{const p=await api('/api/jobs',{{method:'POST',body:JSON.stringify({{action:'create-project',idea:idea.value,field:field.value,target_journal:targetJournal.value||'General Academic Journal'}})}});show(p);await refreshJobs();await refreshReadiness()}}; runBtn.onclick=async()=>start(sel.value); statusBtn.onclick=async()=>start('status'); syncBtn.onclick=async()=>start('sync-artifact-stale'); setInterval(refreshJobs,2500); refresh().catch(show);
 </script></body></html>"""
 
 
@@ -4123,6 +4290,35 @@ class Handler(BaseHTTPRequestHandler):
                         output_file=str(payload.get("output_file") or "") or None,
                         report_output=str(payload.get("report_output") or "") or None,
                         activate=bool(payload.get("activate")),
+                        context=context,
+                    ),
+                    HTTPStatus.CREATED,
+                )
+            elif parsed.path == "/api/hosted-readiness-dossier":
+                _json(
+                    self,
+                    build_hosted_readiness_dossier_from_console(
+                        hosted_readiness_file=str(payload.get("hosted_readiness_file") or ""),
+                        output_dir=str(payload.get("output_dir") or ""),
+                        output_zip=str(payload.get("output_zip") or ""),
+                        customer_id=str(payload.get("customer_id") or ""),
+                        customer_name=str(payload.get("customer_name") or ""),
+                        context=context,
+                    ),
+                    HTTPStatus.CREATED,
+                )
+            elif parsed.path == "/api/hosted-production-acceptance":
+                _json(
+                    self,
+                    run_hosted_production_acceptance_from_console(
+                        base_url=str(payload.get("base_url") or ""),
+                        token=_request_token(self),
+                        hosted_readiness_file=str(payload.get("hosted_readiness_file") or ""),
+                        hosted_readiness_dossier=str(payload.get("hosted_readiness_dossier") or ""),
+                        output_file=str(payload.get("output_file") or ""),
+                        timeout=float(payload.get("timeout") or 8.0),
+                        allow_localhost=bool(payload.get("allow_localhost")),
+                        allow_insecure_http=bool(payload.get("allow_insecure_http")),
                         context=context,
                     ),
                     HTTPStatus.CREATED,
